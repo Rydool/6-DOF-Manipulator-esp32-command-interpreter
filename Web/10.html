@@ -530,9 +530,15 @@ function targetChanged(i){
     document.getElementById("slider"+i).value = v;
 }
 
-function jog(i,dir){
-    sendCmd(`JOG ${AXES[i]}${dir>0?'+':'-'} ${jogStep}`);
+function jog(i, dir){
+    let step = jogStep;
+    let f = parseFloat(document.getElementById("f" + i).value);
+
+    if (isNaN(f) || f <= 0) f = 50; // fallback
+
+    sendCmd(`JOG ${AXES[i]}${dir > 0 ? '+' : '-'} ${step} F${f}`);
 }
+
 
 function gotoAxis(i){
     let v = parseFloat(document.getElementById("t"+i).value);

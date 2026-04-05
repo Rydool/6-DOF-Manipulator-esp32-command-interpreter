@@ -520,57 +520,85 @@ void processCommand(String line) {
     }
 
     // JOG X+ [step]
-    if (line.startsWith("JOG")) {
-        float step = 1.0f;
+    // JOG X+ [step] [F]
+if (line.startsWith("JOG")) {
 
-        int lastSpace = line.lastIndexOf(' ');
-        if (lastSpace > 0) {
-            String maybeNum = line.substring(lastSpace + 1);
-            if (maybeNum.length() > 0 && isDigit(maybeNum[0])) {
-                step = maybeNum.toFloat();
-                line = line.substring(0, lastSpace);
-            }
+    float step = 1.0f;
+    float feed = 50.0f;
+
+    // --- Odczyt prędkości F ---
+    int fIndex = line.indexOf('F');
+    if (fIndex > 0) {
+        String fStr = line.substring(fIndex + 1);
+        fStr.trim();
+        feed = fStr.toFloat();
+        if (feed <= 0) feed = 50.0f;
+
+        // usuń część F z linii
+        String tmp = line.substring(0, fIndex);
+        tmp.trim();
+        line = tmp;
+    }
+
+    // --- Odczyt kroku ---
+    int lastSpace = line.lastIndexOf(' ');
+    if (lastSpace > 0) {
+        String maybeNum = line.substring(lastSpace + 1);
+        maybeNum.trim();
+        if (maybeNum.length() > 0 && isDigit(maybeNum[0])) {
+            step = maybeNum.toFloat();
+            String tmp = line.substring(0, lastSpace);
+            tmp.trim();
+            line = tmp;
         }
+    }
 
-        int axis = -1;
-        int dir = 0;
+    // --- Odczyt osi i kierunku ---
+    int axis = -1;
+    int dir = 0;
 
-        if (line.indexOf("X+") > 0) { axis = 0; dir = +1; }
-        if (line.indexOf("X-") > 0) { axis = 0; dir = -1; }
-        if (line.indexOf("Y+") > 0) { axis = 1; dir = +1; }
-        if (line.indexOf("Y-") > 0) { axis = 1; dir = -1; }
-        if (line.indexOf("Z+") > 0) { axis = 2; dir = +1; }
-        if (line.indexOf("Z-") > 0) { axis = 2; dir = -1; }
-        if (line.indexOf("A+") > 0) { axis = 3; dir = +1; }
-        if (line.indexOf("A-") > 0) { axis = 3; dir = -1; }
-        if (line.indexOf("B+") > 0) { axis = 4; dir = +1; }
-        if (line.indexOf("B-") > 0) { axis = 4; dir = -1; }
-        if (line.indexOf("C+") > 0) { axis = 5; dir = +1; }
-        if (line.indexOf("C-") > 0) { axis = 5; dir = -1; }
+    if (line.indexOf("X+") > 0) { axis = 0; dir = +1; }
+    if (line.indexOf("X-") > 0) { axis = 0; dir = -1; }
+    if (line.indexOf("Y+") > 0) { axis = 1; dir = +1; }
+    if (line.indexOf("Y-") > 0) { axis = 1; dir = -1; }
+    if (line.indexOf("Z+") > 0) { axis = 2; dir = +1; }
+    if (line.indexOf("Z-") > 0) { axis = 2; dir = -1; }
+    if (line.indexOf("A+") > 0) { axis = 3; dir = +1; }
+    if (line.indexOf("A-") > 0) { axis = 3; dir = -1; }
+    if (line.indexOf("B+") > 0) { axis = 4; dir = +1; }
+    if (line.indexOf("B-") > 0) { axis = 4; dir = -1; }
+    if (line.indexOf("C+") > 0) { axis = 5; dir = +1; }
+    if (line.indexOf("C-") > 0) { axis = 5; dir = -1; }
 
-        if (axis < 0) {
-            Serial.println("ERR");
-            return;
-        }
-
-        float target[AXIS_COUNT];
-        for (int i = 0; i < AXIS_COUNT; i++)
-            target[i] = stepgen_getPositionDeg(i);
-
-        target[axis] += dir * step;
-
-        MotionBlock b;
-        b.homing = false;
-        for (int i = 0; i < AXIS_COUNT; i++)
-            b.target_deg[i] = target[i];
-        b.feed_deg_s = 50;
-
-        if (!checkLimits(b)) return;
-
-        motionQueue.push(b);
-        Serial.println("OK");
+    if (axis < 0) {
+        Serial.println("ERR");
         return;
     }
+
+    // --- Obliczenie nowej pozycji ---
+    float target[AXIS_COUNT];
+    for (int i = 0; i < AXIS_COUNT; i++)
+        target[i] = stepgen_getPositionDeg(i);
+
+    target[axis] += dir * step;
+
+    // --- Tworzenie bloku ruchu ---
+    MotionBlock b;
+    b.homing = false;
+
+    for (int i = 0; i < AXIS_COUNT; i++)
+        b.target_deg[i] = target[i];
+
+    b.feed_deg_s = feed;   // 🔥 JOG jedzie z prędkością z UI
+
+    // --- Limity ---
+    if (!checkLimits(b)) return;
+
+    motionQueue.push(b);
+    Serial.println("OK");
+    return;
+}
+
 
     // MOVE X Y Z A B C F
     if (line.startsWith("MOVE")) {
