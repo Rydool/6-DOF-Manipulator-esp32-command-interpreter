@@ -15,7 +15,7 @@
         grid-template-columns:50% 50%;
         gap:12px;
         padding:12px;
-        align-items:stretch;
+        align-items:start;
     }
 
     section {
@@ -86,8 +86,8 @@
     .log-err { color:#f66; }
     .log-cmd { color:#6af; }
 
-    #term div { cursor: pointer; }
-    #term div:hover { background: rgba(255,255,255,0.08); }
+    #term div { cursor:pointer; }
+    #term div:hover { background:rgba(255,255,255,0.08); }
 </style>
 </head>
 
@@ -95,8 +95,8 @@
 
 <header>
     <h1>Manipulator ESP32 – Panel sterowania</h1>
-    <div id="status">Status: ???</div>
-    <button onclick="connectSerial()">Połącz z ESP32 (USB)</button>
+    <div id="status">Status: offline</div>
+    <button onclick="connectSerial()">Połącz z ESP32</button>
 </header>
 
 <main>
@@ -107,7 +107,7 @@
     <div id="term"></div>
 
     <div class="terminal-input">
-        <input id="cmd" placeholder="Wpisz komendę, np. POS, JOG X+, MOVE ...">
+        <input id="cmd" placeholder="Wpisz komendę, np. POS, AXISINFO, JOG X+, MOVE ...">
         <button onclick="sendCmd()">Wyślij</button>
         <button onclick="clearTerminal()">Wyczyść</button>
     </div>
@@ -124,7 +124,7 @@
                 <th>Aktualna</th>
                 <th>Suwak</th>
                 <th>Docelowa</th>
-                <th>Velocity</th>
+                <th>Prędkość (F)</th>
                 <th>JOG</th>
                 <th>GOTO</th>
                 <th>HOME</th>
@@ -194,7 +194,6 @@
             </tr>
         </thead>
         <tbody id="limits"></tbody>
-
         <tfoot>
             <tr>
                 <td>Chwytak</td>
@@ -306,16 +305,16 @@ let programRunning = false;
 let programPaused = false;
 let programStopFlag = false;
 let programCurrentIndex = 0;
+let silentBusy = false;
 
-let serialConnected = false;
+// WebSerial
 let port = null;
 let reader = null;
 let writer = null;
-let lineBuffer = "";
-let silentBusy = false;
+let serialConnected = false;
 const encoder = new TextEncoder();
 
-/* ---------------- TERMINAL ---------------- */
+// ---------------- TERMINAL ----------------
 
 function clearTerminal() {
     document.getElementById("term").textContent = "";
@@ -355,7 +354,7 @@ function log(msg){
     t.scrollTop = t.scrollHeight;
 }
 
-/* ---------------- WEB SERIAL ---------------- */
+// ---------------- WebSerial: connect / read / send ----------------
 
 async function connectSerial() {
     try {
@@ -367,8 +366,14 @@ async function connectSerial() {
         port = await navigator.serial.requestPort();
         await port.open({ baudRate: 115200 });
 
-        reader = port.readable.getReader();
-        writer = port.writable.getWriter();
+        const textDecoder = new TextDecoderStream();
+        port.readable.pipeTo(textDecoder.writable);
+        reader = textDecoder.readable.getReader();
+
+        const textEncoder = new TextEncoderStream();
+        textEncoder.readable.pipeTo(port.writable);
+        writer = textEncoder.writable.getWriter();
+
         serialConnected = true;
 
         document.getElementById("status").textContent = "Status: Połączono (USB)";
@@ -385,41 +390,26 @@ async function connectSerial() {
 }
 
 async function readLoop() {
-    const decoder = new TextDecoder();
+    if (!reader) return;
+    let buffer = "";
     try {
-        while (serialConnected && reader) {
+        while (serialConnected) {
             const { value, done } = await reader.read();
             if (done) break;
             if (value) {
-                const chunk = decoder.decode(value);
-                lineBuffer += chunk;
+                buffer += value;
                 let idx;
-                while ((idx = lineBuffer.indexOf("\n")) >= 0) {
-                    const line = lineBuffer.substring(0, idx).replace(/\r/g, "");
-                    lineBuffer = lineBuffer.substring(idx + 1);
-                    if (line.trim().length) {
-                        handleSerialLine(line.trim());
-                    }
+                while ((idx = buffer.indexOf("\n")) >= 0) {
+                    const line = buffer.substring(0, idx).trim();
+                    buffer = buffer.substring(idx + 1);
+                    if (line.length) handleSerialLine(line);
                 }
             }
         }
     } catch (e) {
         log("ERR read: " + e);
-    } finally {
-        serialConnected = false;
-        document.getElementById("status").textContent = "Status: offline";
-        document.getElementById("status").style.color = "#f66";
     }
 }
-
-navigator.serial?.addEventListener("disconnect", () => {
-    serialConnected = false;
-    reader = null;
-    writer = null;
-    document.getElementById("status").textContent = "Status: odłączono";
-    document.getElementById("status").style.color = "#f66";
-    log("ESP32 odłączone.");
-});
 
 async function sendCmd(cmd = null){
     if (!serialConnected || !writer) {
@@ -434,53 +424,24 @@ async function sendCmd(cmd = null){
     document.getElementById("cmd").value = "";
 
     try {
-        await writer.write(encoder.encode(cmd + "\n"));
+        await writer.write(cmd + "\n");
     } catch (e) {
         log("ERR write: " + e);
     }
 }
 
-async function sendSilentCmd(cmd) {
-    if (!serialConnected || !writer) return;
+async function sendSilentCmd(cmd){
     if (silentBusy) return;
-
     silentBusy = true;
     try {
-        await writer.write(encoder.encode(cmd + "\n"));
-    } catch (e) {
+        if (!serialConnected || !writer) return;
+        await writer.write(cmd + "\n");
+    } catch(e){
         // cicho
+    } finally {
+        silentBusy = false;
     }
-    setTimeout(() => silentBusy = false, 150);
 }
-
-/* ---------------- PARSER ODP. Z ESP32 ---------------- */
-
-function handleSerialLine(line) {
-    // POS: "Axis 1: 12.345"
-    if (line.startsWith("Axis ")) {
-        const m = line.match(/^Axis\s+(\d+):\s*([\-0-9\.]+)/);
-        if (m) {
-            const axis = parseInt(m[1], 10) - 1;
-            const val = parseFloat(m[2]);
-            if (axis >= 0 && axis < AXES.length && !isNaN(val)) {
-                state.pos[axis] = val;
-                updateAxesFromState();
-            }
-        }
-        return;
-    }
-
-    // ERR_LIMIT_AXIS_X → można kiedyś podświetlać oś
-    if (line.startsWith("ERR_LIMIT_AXIS_")) {
-        log(line);
-        return;
-    }
-
-    // OK / ERR / inne — normalnie do terminala
-    log(line);
-}
-
-/* ---------------- STATUS POLLING (Web Serial) ---------------- */
 
 async function poll() {
     if (!serialConnected) {
@@ -488,15 +449,13 @@ async function poll() {
         document.getElementById("status").style.color = "#f66";
         return;
     }
-
     document.getElementById("status").textContent = "Status: Połączono (USB)";
     document.getElementById("status").style.color = "#8f8";
 
-    // ciche pobranie pozycji
     sendSilentCmd("POS");
 }
 
-/* ---------------- OSIE / LIMITY ---------------- */
+// ---------------- OSIE ----------------
 
 function buildTables(){
     let ax = document.getElementById("axes");
@@ -506,41 +465,33 @@ function buildTables(){
 
     AXES.forEach((name,i)=>{
         ax.innerHTML += `
-    <tr>
-        <td>${name}</td>
-        <td id="cur${i}">0.000</td>
-
-        <td>
-        <input type="range"
-               id="slider${i}"
-               step="0.1"
-               min="${state.min[i]}"
-               max="${state.max[i]}"
-               oninput="sliderMove(${i})">
-        </td>
-
-        <td>
-            <input id="t${i}" type="number" value="0" oninput="targetChanged(${i})">
-     </td>
-
-        <td>
-            <input id="f${i}" type="number"
-               min="0"
-               max="${state.vel[i]}"
-               value="50"
-               style="width:60px;">
-        </td>
-
-        <td class="jog">
-            <button onclick="jog(${i},-1)">−</button>
-            <button onclick="jog(${i},1)">+</button>
-        </td>
-
-        <td><button onclick="gotoAxis(${i})">GOTO</button></td>
-        <td><button onclick="sendCmd('HOME ${i}')">HOME</button></td>
-        <td><span id="lim${i}" class="limit-indicator" style="background:#0a0;"></span></td>
-    </tr>`;
-
+        <tr>
+            <td>${name}</td>
+            <td id="cur${i}">0.000</td>
+            <td>
+                <input type="range"
+                       id="slider${i}"
+                       step="0.1"
+                       min="${state.min[i]}"
+                       max="${state.max[i]}"
+                       oninput="sliderMove(${i})">
+            </td>
+            <td><input id="t${i}" type="number" value="0" oninput="targetChanged(${i})"></td>
+            <td>
+                <input id="f${i}" type="number"
+                       min="0"
+                       max="${state.vel[i]}"
+                       value="50"
+                       style="width:60px;">
+            </td>
+            <td class="jog">
+                <button onclick="jog(${i},-1)">−</button>
+                <button onclick="jog(${i},1)">+</button>
+            </td>
+            <td><button onclick="gotoAxis(${i})">GOTO</button></td>
+            <td><button onclick="sendCmd('HOME ${i+1}')">HOME</button></td>
+            <td><span id="lim${i}" class="limit-indicator" style="background:#0a0;"></span></td>
+        </tr>`;
 
         lim.innerHTML += `
         <tr>
@@ -556,15 +507,8 @@ function buildTables(){
 
 function updateSliderRanges() {
     AXES.forEach((_, i) => {
-        const minField = document.getElementById("min" + i);
-        const maxField = document.getElementById("max" + i);
-
-        let min = parseFloat(minField.value);
-        let max = parseFloat(maxField.value);
-
-        if (isNaN(min)) min = -180;
-        if (isNaN(max)) max = 180;
-
+        const min = parseFloat(document.getElementById("min" + i).value);
+        const max = parseFloat(document.getElementById("max" + i).value);
         const slider = document.getElementById("slider" + i);
         slider.min = min;
         slider.max = max;
@@ -593,12 +537,9 @@ function jog(i,dir){
 function gotoAxis(i){
     let v = parseFloat(document.getElementById("t"+i).value);
     let f = parseFloat(document.getElementById("f"+i).value);
-
     if (isNaN(v) || isNaN(f)) return;
-
     sendCmd(`GOTO ${AXES[i]}${v} F${f}`);
 }
-
 
 function setLimits(i){
     let min = document.getElementById("min"+i).value;
@@ -611,11 +552,9 @@ function setLimits(i){
     sendCmd(`SETACC ${i+1} ${acc}`);
 
     updateSliderRanges();
-
-    // 🔥 aktualizacja max prędkości w polu F
-    document.getElementById("f"+i).max = vel;
+    const fInput = document.getElementById("f"+i);
+    if (fInput) fInput.max = vel;
 }
-
 
 function updateAxesFromState() {
     AXES.forEach((_, i) => {
@@ -623,7 +562,15 @@ function updateAxesFromState() {
     });
 }
 
-/* ---------------- CHWYTAK ---------------- */
+function clampAxisValue(axisIndex, value) {
+    const min = parseFloat(document.getElementById("min"+axisIndex).value);
+    const max = parseFloat(document.getElementById("max"+axisIndex).value);
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+}
+
+// ---------------- CHWYTAK ----------------
 
 function gripSliderMove(){
     let v = document.getElementById("gripSlider").value;
@@ -639,10 +586,8 @@ function gripJog(dir){
     let step = jogStep;
     let cur = parseFloat(document.getElementById("gripTarget").value) || 0;
     let v = cur + dir*step;
-    let min = parseFloat(document.getElementById("gripMin").value) || 0;
-    let max = parseFloat(document.getElementById("gripMax").value) || 180;
-    if (v < min) v = min;
-    if (v > max) v = max;
+    if (v<0) v=0;
+    if (v>180) v=180;
     document.getElementById("gripTarget").value = v;
     document.getElementById("gripSlider").value = v;
     sendCmd(`SERVO ${v}`);
@@ -655,47 +600,30 @@ function gripGoto(){
 }
 
 function gripOpen(){
-    let min = parseFloat(document.getElementById("gripMin").value) || 0;
-    document.getElementById("gripTarget").value = min;
-    document.getElementById("gripSlider").value = min;
-    sendCmd(`SERVO ${min}`);
+    document.getElementById("gripTarget").value = 0;
+    document.getElementById("gripSlider").value = 0;
+    sendCmd("SERVO 0");
 }
 
 function gripClose(){
-    let max = parseFloat(document.getElementById("gripMax").value) || 90;
-    document.getElementById("gripTarget").value = max;
-    document.getElementById("gripSlider").value = max;
-    sendCmd(`SERVO ${max}`);
+    document.getElementById("gripTarget").value = 90;
+    document.getElementById("gripSlider").value = 90;
+    sendCmd("SERVO 90");
 }
 
-/* ---------------- PUNKTY P ---------------- */
-
-function clampAxisValue(i, v) {
-    let min = parseFloat(document.getElementById("min"+i).value);
-    let max = parseFloat(document.getElementById("max"+i).value);
-    if (isNaN(min)) min = -180;
-    if (isNaN(max)) max = 180;
-    if (v < min) v = min;
-    if (v > max) v = max;
-    return v;
-}
+// ---------------- PUNKTY P ----------------
 
 function updatePList(){
     let list = document.getElementById("pList");
     list.innerHTML = "";
     pPoints.sort((a,b)=>a.id-b.id);
     pPoints.forEach(p=>{
-        const txt = `P${p.id} — ${p.pos.map(v=>v.toFixed(1)).join(", ")} | ${p.gripOpen?'OPEN':'CLOSE'}`;
-        const opt = document.createElement("option");
-        opt.value = p.id;
-        opt.textContent = txt;
-        list.appendChild(opt);
+        list.innerHTML += `<option value="${p.id}">P${p.id} — ${p.pos.map(v=>v.toFixed(1)).join(", ")} | ${p.gripOpen?'OPEN':'CLOSE'}</option>`;
     });
 }
 
 function getSelectedPoint() {
-    let val = document.getElementById("pList").value;
-    let idx = parseInt(val);
+    let idx = parseInt(document.getElementById("pList").value);
     if (isNaN(idx)) return null;
     return pPoints.find(p => p.id === idx) || null;
 }
@@ -744,7 +672,6 @@ function savePManual(){
     let gripOpen = (gripSel === "open");
 
     let selected = getSelectedPoint();
-
     if (selected) {
         selected.pos = pos;
         selected.gripOpen = gripOpen;
@@ -755,243 +682,232 @@ function savePManual(){
     updatePList();
 }
 
-function onPSelect() {
-    // opcjonalnie można coś podświetlać, na razie nic
+function onPSelect(){}
+
+function gotoP(){
+    let p = getSelectedPoint();
+    if (!p) return;
+    let cmd = "GOTO ";
+    AXES.forEach((ax,i)=>{
+        cmd += `${ax}${p.pos[i]} `;
+    });
+    cmd += "F50";
+    sendCmd(cmd);
+    sendCmd(p.gripOpen ? "SERVO 0" : "SERVO 90");
 }
 
-function deleteP() {
-    let selected = getSelectedPoint();
-    if (!selected) return;
-    pPoints = pPoints.filter(p => p.id !== selected.id);
+function deleteP(){
+    let p = getSelectedPoint();
+    if (!p) return;
+    pPoints = pPoints.filter(x=>x.id!==p.id);
     updatePList();
 }
 
-function clearP() {
+function clearP(){
     pPoints = [];
     nextPId = 1;
     updatePList();
 }
 
-function gotoP() {
-    let selected = getSelectedPoint();
-    if (!selected) return;
-    sendCmd(`PGOTO ${selected.id}`);
-}
-
-function exportPoints() {
+function exportPoints(){
     const data = JSON.stringify(pPoints);
-    navigator.clipboard?.writeText(data);
-    log("Export P: skopiowano JSON do schowka.");
+    navigator.clipboard.writeText(data).then(()=>log("Export P: skopiowano do schowka"));
 }
 
-function importPoints() {
-    const txt = prompt("Wklej JSON z punktami P:");
-    if (!txt) return;
-    try {
-        const arr = JSON.parse(txt);
-        if (Array.isArray(arr)) {
-            pPoints = arr;
-            nextPId = (pPoints.reduce((m,p)=>Math.max(m,p.id),0) || 0) + 1;
-            updatePList();
-            log("Import P: OK");
+function importPoints(){
+    navigator.clipboard.readText().then(txt=>{
+        try{
+            const arr = JSON.parse(txt);
+            if (Array.isArray(arr)) {
+                pPoints = arr;
+                nextPId = (pPoints.reduce((m,p)=>Math.max(m,p.id),0) || 0) + 1;
+                updatePList();
+                log("Import P: OK");
+            }
+        }catch(e){
+            log("ERR import P: " + e);
         }
-    } catch (e) {
-        log("ERR import P: " + e);
-    }
+    });
 }
 
-/* ---------------- PROGRAM ---------------- */
+// ---------------- PROGRAM ----------------
 
-function updateProgramTable() {
+function refreshProgramTable(){
     const tbody = document.getElementById("progTable");
     tbody.innerHTML = "";
-    programSteps.forEach((step, idx) => {
-        const tr = document.createElement("tr");
-
-        const tdIdx = document.createElement("td");
-        tdIdx.textContent = (idx+1);
-        tr.appendChild(tdIdx);
-
-        const tdP = document.createElement("td");
-        tdP.textContent = "P" + step.pId;
-        tr.appendChild(tdP);
-
-        const tdF = document.createElement("td");
-        const inpF = document.createElement("input");
-        inpF.type = "number";
-        inpF.value = step.feed;
-        inpF.oninput = () => {
-            step.feed = parseFloat(inpF.value) || 50;
-        };
-        tdF.appendChild(inpF);
-        tr.appendChild(tdF);
-
-        const tdSleep = document.createElement("td");
-        const inpS = document.createElement("input");
-        inpS.type = "number";
-        inpS.value = step.sleepMs;
-        inpS.oninput = () => {
-            step.sleepMs = parseInt(inpS.value) || 0;
-        };
-        tdSleep.appendChild(inpS);
-        tr.appendChild(tdSleep);
-
-        const tdDel = document.createElement("td");
-        const btnDel = document.createElement("button");
-        btnDel.textContent = "X";
-        btnDel.onclick = () => {
-            programSteps.splice(idx,1);
-            updateProgramTable();
-        };
-        tdDel.appendChild(btnDel);
-        tr.appendChild(tdDel);
-
-        tbody.appendChild(tr);
+    programSteps.forEach((st,idx)=>{
+        tbody.innerHTML += `
+        <tr>
+            <td>${idx+1}</td>
+            <td>P${st.pid}</td>
+            <td><input type="number" value="${st.feed}" onchange="programSteps[${idx}].feed=parseFloat(this.value)||50"></td>
+            <td><input type="number" value="${st.sleep}" onchange="programSteps[${idx}].sleep=parseInt(this.value)||0"></td>
+            <td><button onclick="removeProgramStep(${idx})">X</button></td>
+        </tr>`;
     });
 }
 
-function addProgramStep() {
-    const selected = getSelectedPoint();
-    if (!selected) {
-        log("ERR: wybierz punkt P, aby dodać krok.");
-        return;
-    }
-    programSteps.push({
-        pId: selected.id,
-        feed: 50,
-        sleepMs: 0
-    });
-    updateProgramTable();
+function addProgramStep(){
+    let p = getSelectedPoint();
+    if (!p) return;
+    programSteps.push({pid:p.id, feed:50, sleep:0});
+    refreshProgramTable();
 }
 
-function clearProgram() {
+function removeProgramStep(i){
+    programSteps.splice(i,1);
+    refreshProgramTable();
+}
+
+function clearProgram(){
     programSteps = [];
-    programRunning = false;
-    programPaused = false;
-    programStopFlag = false;
-    programCurrentIndex = 0;
-    updateProgramTable();
+    refreshProgramTable();
 }
 
-async function runProgram() {
-    if (programSteps.length === 0) {
-        log("Program pusty.");
-        return;
+async function runProgramStep(step){
+    let p = pPoints.find(x=>x.id===step.pid);
+    if (!p) return;
+    let cmd = "GOTO ";
+    AXES.forEach((ax,i)=>{
+        cmd += `${ax}${p.pos[i]} `;
+    });
+    cmd += `F${step.feed}`;
+    await sendCmd(cmd);
+    await sendCmd(p.gripOpen ? "SERVO 0" : "SERVO 90");
+    if (step.sleep>0) {
+        await new Promise(res=>setTimeout(res, step.sleep));
     }
+}
+
+async function startProgram(){
+    if (programRunning || programSteps.length===0) return;
     programRunning = true;
     programPaused = false;
     programStopFlag = false;
     programCurrentIndex = 0;
 
-    while (programRunning && !programStopFlag && programCurrentIndex < programSteps.length) {
-        const step = programSteps[programCurrentIndex];
-        log(`Program: krok ${programCurrentIndex+1} → P${step.pId}, F${step.feed}`);
-
-        await sendCmd(`PGOTO ${step.pId} ${step.feed}`);
-
-        if (step.sleepMs > 0) {
-            await new Promise(res => setTimeout(res, step.sleepMs));
+    while (programRunning && !programStopFlag && programCurrentIndex < programSteps.length){
+        if (programPaused) {
+            await new Promise(res=>setTimeout(res,100));
+            continue;
         }
-
-        if (programStopFlag) break;
-
-        while (programPaused && !programStopFlag) {
-            await new Promise(res => setTimeout(res, 100));
-        }
-
+        await runProgramStep(programSteps[programCurrentIndex]);
         programCurrentIndex++;
     }
-
     programRunning = false;
-    programPaused = false;
-    programStopFlag = false;
-    programCurrentIndex = 0;
-    log("Program zakończony.");
 }
 
-function startProgram() {
-    if (programRunning) {
-        log("Program już działa.");
-        return;
-    }
-    runProgram();
-}
-
-function stopProgram() {
+function stopProgram(){
     programStopFlag = true;
     programPaused = false;
-    log("Program: STOP");
 }
 
-function pauseProgram() {
+function pauseProgram(){
     if (!programRunning) return;
     programPaused = !programPaused;
-    log(programPaused ? "Program: PAUZA" : "Program: WZNOWIONY");
 }
 
-function resetProgram() {
-    programStopFlag = true;
-    programPaused = false;
+function resetProgram(){
     programCurrentIndex = 0;
-    log("Program: RESET");
+    programPaused = false;
+    programStopFlag = false;
 }
 
-function stepProgram(dir) {
-    // prosty placeholder – można rozbudować o ręczne przechodzenie kroków
-    log("StepProgram: " + dir);
+function stepProgram(dir){
+    if (programSteps.length===0) return;
+    programCurrentIndex += dir;
+    if (programCurrentIndex<0) programCurrentIndex=0;
+    if (programCurrentIndex>=programSteps.length) programCurrentIndex=programSteps.length-1;
 }
 
-function exportAll() {
+// export/import całości
+function exportAll(){
     const data = {
-        points: pPoints,
-        program: programSteps
+        points:pPoints,
+        program:programSteps
     };
-    const txt = JSON.stringify(data);
-    navigator.clipboard?.writeText(txt);
-    log("Export ALL: JSON w schowku.");
+    navigator.clipboard.writeText(JSON.stringify(data)).then(()=>log("Export: OK"));
 }
 
-function importAll() {
-    const txt = prompt("Wklej JSON (punkty + program):");
-    if (!txt) return;
-    try {
-        const obj = JSON.parse(txt);
-        if (obj.points && Array.isArray(obj.points)) {
-            pPoints = obj.points;
-            nextPId = (pPoints.reduce((m,p)=>Math.max(m,p.id),0) || 0) + 1;
-            updatePList();
+function importAll(){
+    navigator.clipboard.readText().then(txt=>{
+        try{
+            const obj = JSON.parse(txt);
+            if (obj.points && Array.isArray(obj.points)) {
+                pPoints = obj.points;
+                nextPId = (pPoints.reduce((m,p)=>Math.max(m,p.id),0) || 0) + 1;
+                updatePList();
+            }
+            if (obj.program && Array.isArray(obj.program)) {
+                programSteps = obj.program;
+                refreshProgramTable();
+            }
+            log("Import: OK");
+        }catch(e){
+            log("ERR import: " + e);
         }
-        if (obj.program && Array.isArray(obj.program)) {
-            programSteps = obj.program;
-            updateProgramTable();
-        }
-        log("Import ALL: OK");
-    } catch (e) {
-        log("ERR import ALL: " + e);
-    }
+    });
 }
 
-/* ---------------- INICJALIZACJA ---------------- */
+// ---------------- PARSER ODEBRANYCH LINII ----------------
 
-document.getElementById("cmd").addEventListener("keydown", function(e) {
-    if (e.key === "Enter") {
-        e.preventDefault();
-        sendCmd();
+function handleSerialLine(line){
+    if (!line) return;
+
+    // --- AXISINFO ---
+    if (line.startsWith("Axis ") && line.includes("steps/deg")) {
+        log(line);
+        return;
     }
-});
 
-function initUI() {
+    // --- LIMITS ---
+    if (line.startsWith("Axis ") && line.includes("min=") && line.includes("max=")) {
+        log(line);
+        return;
+    }
+
+    // --- POS (ciche) ---
+    // Przykład: "Axis 1: 50.000"
+    if (line.startsWith("Axis ") && line.includes(":") && !line.includes("steps/deg")) {
+
+        const parts = line.split(":");
+        if (parts.length >= 2) {
+            const left = parts[0].trim();   // "Axis 1"
+            const right = parts[1].trim();  // "50.000"
+
+            const idx = parseInt(left.replace("Axis","")) - 1;
+            const val = parseFloat(right);
+
+            if (!isNaN(idx) && idx >= 0 && idx < AXES.length && !isNaN(val)) {
+                state.pos[idx] = val;
+                updateAxesFromState();
+            }
+        }
+
+        return; // <-- POS NIE trafia do terminala
+    }
+
+    // --- wszystko inne logujemy ---
+    log(line);
+}
+
+
+// ---------------- INIT ----------------
+
+window.addEventListener("load", ()=>{
     buildTables();
     updateSliderRanges();
-    setJog(1);
-    updatePList();
-    updateProgramTable();
-    document.getElementById("status").textContent = "Status: oczekiwanie na USB";
-    document.getElementById("status").style.color = "#aaa";
-}
 
-initUI();
-setInterval(poll, 300);
+    document.getElementById("cmd").addEventListener("keydown", (e)=>{
+        if (e.key === "Enter") {
+            e.preventDefault();
+            sendCmd();
+        }
+    });
+
+    setInterval(poll, 100);
+});
 </script>
+
 </body>
 </html>

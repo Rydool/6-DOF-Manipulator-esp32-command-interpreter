@@ -416,6 +416,55 @@ void processCommand(String line) {
         return;
     }
 
+    // SETVEL <axis> <vel>
+    if (line.startsWith("SETVEL")) {
+        int idx1 = line.indexOf(' ');
+        int idx2 = line.indexOf(' ', idx1 + 1);
+
+        if (idx1 < 0 || idx2 < 0) {
+            Serial.println("ERR");
+            return;
+        }
+
+        int axis = line.substring(idx1 + 1, idx2).toInt() - 1;
+        float vel = line.substring(idx2 + 1).toFloat();
+
+        if (axis < 0 || axis >= AXIS_COUNT) {
+            Serial.println("ERR");
+            return;
+        }
+
+        machineConfig.max_speed_deg_s[axis] = vel;
+        machineConfig.save();
+        Serial.println("OK");
+        return;
+    }
+
+    // SETACC <axis> <acc>
+    if (line.startsWith("SETACC")) {
+        int idx1 = line.indexOf(' ');
+        int idx2 = line.indexOf(' ', idx1 + 1);
+
+        if (idx1 < 0 || idx2 < 0) {
+            Serial.println("ERR");
+            return;
+        }
+
+        int axis = line.substring(idx1 + 1, idx2).toInt() - 1;
+        float acc = line.substring(idx2 + 1).toFloat();
+
+        if (axis < 0 || axis >= AXIS_COUNT) {
+            Serial.println("ERR");
+            return;
+        }
+
+        machineConfig.max_accel_deg_s2[axis] = acc;
+        machineConfig.save();
+        Serial.println("OK");
+        return;
+    }
+
+
     // SERVO <angle>
     if (line.startsWith("SERVO")) {
         float angle = line.substring(5).toFloat();
