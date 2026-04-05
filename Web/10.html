@@ -246,8 +246,6 @@
         <button onclick="gotoP()">PGOTO</button>
         <button onclick="deleteP()">Usuń</button>
         <button onclick="clearP()">Wyczyść listę</button>
-        <button onclick="exportPoints()">Export P</button>
-        <button onclick="importPoints()">Import P</button>
     </div>
 
     <h2>Program</h2>
@@ -715,27 +713,6 @@ function clearP(){
     updatePList();
 }
 
-function exportPoints(){
-    const data = JSON.stringify(pPoints);
-    navigator.clipboard.writeText(data).then(()=>log("Export P: skopiowano do schowka"));
-}
-
-function importPoints(){
-    navigator.clipboard.readText().then(txt=>{
-        try{
-            const arr = JSON.parse(txt);
-            if (Array.isArray(arr)) {
-                pPoints = arr;
-                nextPId = (pPoints.reduce((m,p)=>Math.max(m,p.id),0) || 0) + 1;
-                updatePList();
-                log("Import P: OK");
-            }
-        }catch(e){
-            log("ERR import P: " + e);
-        }
-    });
-}
-
 // ---------------- PROGRAM ----------------
 
 function refreshProgramTable(){
@@ -827,33 +804,71 @@ function stepProgram(dir){
 }
 
 // export/import całości
-function exportAll(){
+function exportAll() {
     const data = {
-        points:pPoints,
-        program:programSteps
+        points: pPoints,
+        program: programSteps
     };
-    navigator.clipboard.writeText(JSON.stringify(data)).then(()=>log("Export: OK"));
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json"
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+
+    a.href = url;
+    a.download = "robot_program.json";
+    a.click();
+
+    URL.revokeObjectURL(url);
 }
 
-function importAll(){
-    navigator.clipboard.readText().then(txt=>{
-        try{
-            const obj = JSON.parse(txt);
-            if (obj.points && Array.isArray(obj.points)) {
-                pPoints = obj.points;
-                nextPId = (pPoints.reduce((m,p)=>Math.max(m,p.id),0) || 0) + 1;
-                updatePList();
+function importAll() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+
+    input.onchange = e => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+
+        reader.onload = () => {
+            try {
+                const data = JSON.parse(reader.result);
+
+                // Import punktów
+                if (Array.isArray(data.points)) {
+                    pPoints = data.points;
+                    nextPId = pPoints.length > 0
+                        ? Math.max(...pPoints.map(p => p.id)) + 1
+                        : 1;
+                    updatePList();
+                    log("Zaimportowano punkty P.");
+                }
+
+                // Import programu
+                if (Array.isArray(data.program)) {
+                    programSteps = data.program;
+                    updateProgramTable();
+                    log("Zaimportowano program.");
+                }
+
+                if (!data.points && !data.program) {
+                    alert("Plik nie zawiera danych programu ani punktów.");
+                }
+
+            } catch (err) {
+                alert("Błąd podczas importu pliku.");
             }
-            if (obj.program && Array.isArray(obj.program)) {
-                programSteps = obj.program;
-                refreshProgramTable();
-            }
-            log("Import: OK");
-        }catch(e){
-            log("ERR import: " + e);
-        }
-    });
+        };
+
+        reader.readAsText(file);
+    };
+
+    input.click();
 }
+
 
 // ---------------- PARSER ODEBRANYCH LINII ----------------
 
