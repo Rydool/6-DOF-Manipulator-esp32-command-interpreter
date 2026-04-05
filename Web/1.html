@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Manipulator ESP32 GUI</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            background: #111;
+            color: #eee;
+            margin: 0;
+            padding: 0;
+        }
+        header {
+            padding: 10px 20px;
+            background: #222;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        header h1 {
+            font-size: 18px;
+            margin: 0;
+        }
+        .status-indicator {
+            font-size: 12px;
+            color: #8f8;
+        }
+        main {
+            display: grid;
+            grid-template-columns: 2fr 3fr;
+            gap: 16px;
+            padding: 16px;
+        }
+        section {
+            background: #181818;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 10px 12px;
+        }
+        section h2 {
+            font-size: 14px;
+            margin: 0 0 8px 0;
+            border-bottom: 1px solid #333;
+            padding-bottom: 4px;
+        }
+        .terminal-log {
+            background: #000;
+            border: 1px solid #444;
+            border-radius: 4px;
+            height: 260px;
+            padding: 6px;
+            font-family: monospace;
+            font-size: 12px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .terminal-input {
+            display: flex;
+            margin-top: 8px;
+            gap: 6px;
+        }
+        .terminal-input input {
+            flex: 1;
+            padding: 6px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #111;
+            color: #eee;
+            font-family: monospace;
+        }
+        .terminal-input button {
+            padding: 6px 10px;
+            border-radius: 4px;
+            border: 1px solid #555;
+            background: #2b6;
+            color: #fff;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .terminal-input button:hover {
+            background: #3c8;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        th, td {
+            border: 1px solid #333;
+            padding: 4px 6px;
+            text-align: center;
+        }
+        th {
+            background: #202020;
+        }
+        input[type="number"] {
+            width: 70px;
+            padding: 2px 4px;
+            border-radius: 3px;
+            border: 1px solid #444;
+            background: #111;
+            color: #eee;
+            font-size: 11px;
+        }
+        .jog-buttons {
+            display: flex;
+            gap: 4px;
+            justify-content: center;
+        }
+        .jog-buttons button {
+            padding: 2px 6px;
+            font-size: 11px;
+            border-radius: 3px;
+            border: 1px solid #555;
+            background: #444;
+            color: #fff;
+            cursor: pointer;
+        }
+        .jog-buttons button:hover {
+            background: #666;
+        }
+        .small-btn {
+            padding: 2px 6px;
+            font-size: 11px;
+            border-radius: 3px;
+            border: 1px solid #555;
+            background: #2b6;
+            color: #fff;
+            cursor: pointer;
+        }
+        .small-btn:hover {
+            background: #3c8;
+        }
+        .row-label {
+            font-weight: 600;
+        }
+        .footer {
+            padding: 6px 12px;
+            font-size: 11px;
+            color: #666;
+            border-top: 1px solid #222;
+            background: #111;
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Manipulator ESP32 – Panel sterowania</h1>
+    <div class="status-indicator" id="connStatus">Status: ???</div>
+</header>
+
+<main>
+    <!-- LEWA KOLUMNA: Terminal -->
+    <section>
+        <h2>Terminal</h2>
+        <div class="terminal-log" id="terminalLog"></div>
+        <div class="terminal-input">
+            <input id="terminalInput" type="text" placeholder="Wpisz komendę, np. POS, MOVE 0 0 0 0 0 0 50, JOG X+">
+            <button id="sendCmdBtn">Wyślij</button>
+        </div>
+    </section>
+
+    <!-- PRAWA KOLUMNA: Osi, limity, parametry -->
+    <section>
+        <h2>Osi / JOG / Pozycje</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Oś</th>
+                    <th>Aktualna poz. [deg]</th>
+                    <th>Docelowa [deg]</th>
+                    <th>JOG</th>
+                    <th>GOTO</th>
+                </tr>
+            </thead>
+            <tbody id="axesTableBody">
+                <!-- Wypełniane z JS -->
+            </tbody>
+        </table>
+        <div style="margin-top:8px; font-size:11px;">
+            Krok JOG [deg]:
+            <input type="number" id="jogStepInput" value="1.0" step="0.1">
+        </div>
+    </section>
+
+    <section>
+        <h2>Limity / Prędkości / Przyspieszenia</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Oś</th>
+                    <th>Min [deg]</th>
+                    <th>Max [deg]</th>
+                    <th>Max prędkość [deg/s]</th>
+                    <th>Max przysp. [deg/s²]</th>
+                    <th>Zapisz</th>
+                </tr>
+            </thead>
+            <tbody id="limitsTableBody">
+                <!-- Wypełniane z JS -->
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h2>Chwytak</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Parametr</th>
+                    <th>Wartość</th>
+                    <th>Akcja</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="row-label">Kąt [deg]</td>
+                    <td>
+                        <input type="number" id="gripperAngleInput" value="0" step="1">
+                    </td>
+                    <td>
+                        <button class="small-btn" id="gripperSetBtn">Ustaw SERVO</button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+</main>
+
+<div class="footer">
+    Połączenie przez WiFi → HTTP API /api/cmd i /api/status. Dopasuj do firmware.
+</div>
+
+<script>
+    // Konfiguracja osi – dopasuj do AXIS_COUNT i nazw
+    const AXES = [
+        { id: 0, name: 'X' },
+        { id: 1, name: 'Y' },
+        { id: 2, name: 'Z' },
+        { id: 3, name: 'A' },
+        { id: 4, name: 'B' },
+        { id: 5, name: 'C' },
+    ];
+
+    const terminalLog = document.getElementById('terminalLog');
+    const terminalInput = document.getElementById('terminalInput');
+    const sendCmdBtn = document.getElementById('sendCmdBtn');
+    const connStatus = document.getElementById('connStatus');
+    const axesTableBody = document.getElementById('axesTableBody');
+    const limitsTableBody = document.getElementById('limitsTableBody');
+    const jogStepInput = document.getElementById('jogStepInput');
+    const gripperAngleInput = document.getElementById('gripperAngleInput');
+    const gripperSetBtn = document.getElementById('gripperSetBtn');
+
+    // Bufory danych
+    let axisState = {
+        positions: Array(AXES.length).fill(0),
+        limitMin: Array(AXES.length).fill(0),
+        limitMax: Array(AXES.length).fill(0),
+        maxVel:   Array(AXES.length).fill(50),
+        maxAccel: Array(AXES.length).fill(100)
+    };
+
+    // Inicjalizacja tabeli osi
+    function buildAxesTable() {
+        axesTableBody.innerHTML = '';
+        AXES.forEach(axis => {
+            const tr = document.createElement('tr');
+
+            const tdName = document.createElement('td');
+            tdName.textContent = axis.name;
+            tdName.className = 'row-label';
+
+            const tdCur = document.createElement('td');
+            const spanCur = document.createElement('span');
+            spanCur.id = `axisCur_${axis.id}`;
+            spanCur.textContent = '0.000';
+            tdCur.appendChild(spanCur);
+
+            const tdTarget = document.createElement('td');
+            const inputTarget = document.createElement('input');
+            inputTarget.type = 'number';
+            inputTarget.step = '0.1';
+            inputTarget.value = '0';
+            inputTarget.id = `axisTarget_${axis.id}`;
+            tdTarget.appendChild(inputTarget);
+
+            const tdJog = document.createElement('td');
+            const jogDiv = document.createElement('div');
+            jogDiv.className = 'jog-buttons';
+            const btnMinus = document.createElement('button');
+            btnMinus.textContent = '−';
+            btnMinus.onclick = () => jogAxis(axis.id, -1);
+            const btnPlus = document.createElement('button');
+            btnPlus.textContent = '+';
+            btnPlus.onclick = () => jogAxis(axis.id, +1);
+            jogDiv.appendChild(btnMinus);
+            jogDiv.appendChild(btnPlus);
+            tdJog.appendChild(jogDiv);
+
+            const tdGoto = document.createElement('td');
+            const btnGoto = document.createElement('button');
+            btnGoto.className = 'small-btn';
+            btnGoto.textContent = 'GOTO';
+            btnGoto.onclick = () => gotoAxis(axis.id);
+            tdGoto.appendChild(btnGoto);
+
+            tr.appendChild(tdName);
+            tr.appendChild(tdCur);
+            tr.appendChild(tdTarget);
+            tr.appendChild(tdJog);
+            tr.appendChild(tdGoto);
+
+            axesTableBody.appendChild(tr);
+        });
+    }
+
+    // Inicjalizacja tabeli limitów
+    function buildLimitsTable() {
+        limitsTableBody.innerHTML = '';
+        AXES.forEach(axis => {
+            const tr = document.createElement('tr');
+
+            const tdName = document.createElement('td');
+            tdName.textContent = axis.name;
+            tdName.className = 'row-label';
+
+            const tdMin = document.createElement('td');
+            const inMin = document.createElement('input');
+            inMin.type = 'number';
+            inMin.step = '0.1';
+            inMin.value = '-180';
+            inMin.id = `limitMin_${axis.id}`;
+            tdMin.appendChild(inMin);
+
+            const tdMax = document.createElement('td');
+            const inMax = document.createElement('input');
+            inMax.type = 'number';
+            inMax.step = '0.1';
+            inMax.value = '180';
+            inMax.id = `limitMax_${axis.id}`;
+            tdMax.appendChild(inMax);
+
+            const tdVel = document.createElement('td');
+            const inVel = document.createElement('input');
+            inVel.type = 'number';
+            inVel.step = '1';
+            inVel.value = '50';
+            inVel.id = `maxVel_${axis.id}`;
+            tdVel.appendChild(inVel);
+
+            const tdAcc = document.createElement('td');
+            const inAcc = document.createElement('input');
+            inAcc.type = 'number';
+            inAcc.step = '1';
+            inAcc.value = '100';
+            inAcc.id = `maxAccel_${axis.id}`;
+            tdAcc.appendChild(inAcc);
+
+            const tdSave = document.createElement('td');
+            const btnSave = document.createElement('button');
+            btnSave.className = 'small-btn';
+            btnSave.textContent = 'SET';
+            btnSave.onclick = () => saveAxisLimits(axis.id);
+            tdSave.appendChild(btnSave);
+
+            tr.appendChild(tdName);
+            tr.appendChild(tdMin);
+            tr.appendChild(tdMax);
+            tr.appendChild(tdVel);
+            tr.appendChild(tdAcc);
+            tr.appendChild(tdSave);
+
+            limitsTableBody.appendChild(tr);
+        });
+    }
+
+    // Terminal – logowanie
+    function logTerminal(line, type = 'info') {
+        const ts = new Date().toLocaleTimeString();
+        const prefix = type === 'err' ? '[ERR]' : type === 'tx' ? '[TX ]' : type === 'rx' ? '[RX ]' : '[LOG]';
+        terminalLog.textContent += `${ts} ${prefix} ${line}\n`;
+        terminalLog.scrollTop = terminalLog.scrollHeight;
+    }
+
+    // Wysyłanie komendy tekstowej do ESP32
+    async function sendCommand(cmd) {
+        if (!cmd || !cmd.trim()) return;
+        logTerminal(cmd, 'tx');
+        try {
+            const res = await fetch('/api/cmd', {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: cmd + '\n'
+            });
+            const text = await res.text();
+            if (text.trim().length > 0) {
+                logTerminal(text.trim(), 'rx');
+            }
+        } catch (e) {
+            logTerminal('Błąd połączenia: ' + e.message, 'err');
+        }
+    }
+
+    // JOG osi – generuje komendę JOG X+/X- itd.
+    function jogAxis(axisId, dir) {
+        const axisName = AXES[axisId].name;
+        const step = parseFloat(jogStepInput.value) || 1.0;
+        const sign = dir > 0 ? '+' : '-';
+        const cmd = `JOG ${axisName}${sign} ${step}`;
+        sendCommand(cmd);
+    }
+
+    // GOTO osi – generuje komendę GOTO X.. Y.. itd. z jedną osią
+    function gotoAxis(axisId) {
+        const axisName = AXES[axisId].name;
+        const targetInput = document.getElementById(`axisTarget_${axisId}`);
+        const val = parseFloat(targetInput.value);
+        if (isNaN(val)) return;
+        const cmd = `GOTO ${axisName}${val.toFixed(3)} F50`;
+        sendCommand(cmd);
+    }
+
+    // Zapis limitów / prędkości / przyspieszeń dla osi
+    function saveAxisLimits(axisId) {
+        const minVal = parseFloat(document.getElementById(`limitMin_${axisId}`).value);
+        const maxVal = parseFloat(document.getElementById(`limitMax_${axisId}`).value);
+        const maxVel = parseFloat(document.getElementById(`maxVel_${axisId}`).value);
+        const maxAcc = parseFloat(document.getElementById(`maxAccel_${axisId}`).value);
+
+        if (isNaN(minVal) || isNaN(maxVal)) return;
+
+        // Soft-limity – SETLIMIT <axis> <min> <max>
+        const axisIndexHuman = axisId + 1;
+        sendCommand(`SETLIMIT ${axisIndexHuman} ${minVal} ${maxVal}`);
+
+        // Max prędkość / przyspieszenie – jeśli masz własne komendy, tu je wstaw
+        // np. SETAXISCONF <axis> <maxVel> <maxAcc>
+        if (!isNaN(maxVel) || !isNaN(maxAcc)) {
+            // Dopasuj do swojego firmware:
+            // sendCommand(`SETAXISCONF ${axisIndexHuman} ${maxVel} ${maxAcc}`);
+        }
+    }
+
+    // Ustawienie chwytaka – SERVO <angle>
+    function setGripper() {
+        const angle = parseFloat(gripperAngleInput.value);
+        if (isNaN(angle)) return;
+        sendCommand(`SERVO ${angle}`);
+    }
+
+    // Pobieranie statusu z ESP32 – pozycje, limity itd.
+    async function fetchStatus() {
+        try {
+            const res = await fetch('/api/status');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+
+            // Oczekiwany format (dopasuj w firmware):
+            // {
+            //   positions: [..],
+            //   limitMin: [..],
+            //   limitMax: [..],
+            //   maxVel:   [..],
+            //   maxAccel: [..]
+            // }
+
+            if (Array.isArray(data.positions)) {
+                axisState.positions = data.positions;
+            }
+            if (Array.isArray(data.limitMin)) {
+                axisState.limitMin = data.limitMin;
+            }
+            if (Array.isArray(data.limitMax)) {
+                axisState.limitMax = data.limitMax;
+            }
+            if (Array.isArray(data.maxVel)) {
+                axisState.maxVel = data.maxVel;
+            }
+            if (Array.isArray(data.maxAccel)) {
+                axisState.maxAccel = data.maxAccel;
+            }
+
+            updateUIFromState();
+            connStatus.textContent = 'Status: OK (status online)';
+            connStatus.style.color = '#8f8';
+        } catch (e) {
+            connStatus.textContent = 'Status: brak odpowiedzi / offline';
+            connStatus.style.color = '#f88';
+        }
+    }
+
+    // Aktualizacja UI z axisState
+    function updateUIFromState() {
+        AXES.forEach(axis => {
+            const curSpan = document.getElementById(`axisCur_${axis.id}`);
+            if (curSpan && axisState.positions[axis.id] != null) {
+                curSpan.textContent = axisState.positions[axis.id].toFixed(3);
+            }
+
+            const inMin = document.getElementById(`limitMin_${axis.id}`);
+            const inMax = document.getElementById(`limitMax_${axis.id}`);
+            const inVel = document.getElementById(`maxVel_${axis.id}`);
+            const inAcc = document.getElementById(`maxAccel_${axis.id}`);
+
+            if (inMin && axisState.limitMin[axis.id] != null) {
+                inMin.value = axisState.limitMin[axis.id];
+            }
+            if (inMax && axisState.limitMax[axis.id] != null) {
+                inMax.value = axisState.limitMax[axis.id];
+            }
+            if (inVel && axisState.maxVel[axis.id] != null) {
+                inVel.value = axisState.maxVel[axis.id];
+            }
+            if (inAcc && axisState.maxAccel[axis.id] != null) {
+                inAcc.value = axisState.maxAccel[axis.id];
+            }
+        });
+    }
+
+    // Obsługa terminala
+    sendCmdBtn.addEventListener('click', () => {
+        const cmd = terminalInput.value;
+        terminalInput.value = '';
+        sendCommand(cmd);
+    });
+
+    terminalInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            const cmd = terminalInput.value;
+            terminalInput.value = '';
+            sendCommand(cmd);
+        }
+    });
+
+    gripperSetBtn.addEventListener('click', setGripper);
+
+    // Start
+    buildAxesTable();
+    buildLimitsTable();
+    fetchStatus();
+    setInterval(fetchStatus, 1000); // odświeżanie statusu co 1s
+</script>
+</body>
+</html>

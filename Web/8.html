@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Manipulator ESP32 – Panel sterowania</title>
+
+<style>
+    body { font-family: Arial; background:#111; color:#eee; margin:0; }
+    header { background:#222; padding:10px 20px; border-bottom:1px solid #333; display:flex; justify-content:space-between; }
+    h1 { margin:0; font-size:18px; }
+    #status { font-size:12px; color:#8f8; }
+
+    main {
+        display:grid;
+        grid-template-columns:50% 50%;
+        gap:12px;
+        padding:12px;
+        align-items:stretch;
+    }
+
+    section {
+        background:#181818;
+        padding:10px;
+        border:1px solid #333;
+        border-radius:6px;
+    }
+
+    h2 {
+        margin:0 0 8px 0;
+        font-size:14px;
+        border-bottom:1px solid #333;
+        padding-bottom:4px;
+    }
+
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    th,td { border:1px solid #333; padding:4px; text-align:center; }
+
+    input[type=number], select {
+        width:70px;
+        background:#111;
+        color:#eee;
+        border:1px solid #444;
+        border-radius:3px;
+        padding:2px;
+    }
+
+    button {
+        background:#2b6;
+        color:#fff;
+        border:1px solid #444;
+        border-radius:4px;
+        padding:4px 8px;
+        cursor:pointer;
+    }
+    button:hover { background:#3c8; }
+
+    #term {
+        background:#000;
+        height:350px;
+        overflow-y:auto;
+        padding:6px;
+        font-family:monospace;
+        font-size:12px;
+        border:1px solid #444;
+		white-space: pre-wrap;
+    }
+
+    .terminal-input { display:flex; gap:6px; margin-top:6px; }
+    .terminal-input input { flex:1; background:#111; color:#eee; border:1px solid #444; padding:6px; }
+
+    .jog { display:flex; gap:4px; justify-content:center; }
+    .jog button { background:#444; }
+    .jog button:hover { background:#666; }
+
+    input[type=range] { width:120px; }
+
+    .limit-indicator {
+        width:12px;
+        height:12px;
+        border-radius:50%;
+        display:inline-block;
+    }
+	.log-ok { color:#8f8; }
+	.log-err { color:#f66; }
+	.log-cmd { color:#6af; }
+	#term div {
+		cursor: pointer;
+	}
+
+	#term div:hover {
+		background: rgba(255,255,255,0.08);
+	}
+	
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>Manipulator ESP32 – Panel sterowania</h1>
+    <div id="status">Status: ???</div>
+    <button onclick="connectSerial()">Połącz z ESP32</button>
+</header>
+
+<main>
+
+<!-- TERMINAL -->
+<section>
+    <h2>Terminal</h2>
+    <div id="term"></div>
+
+    <div class="terminal-input">
+        <input id="cmd" placeholder="Wpisz komendę, np. POS, JOG X+, MOVE ...">
+        <button onclick="sendCmd()">Wyślij</button>
+        <button onclick="clearTerminal()">Wyczyść</button>
+    </div>
+</section>
+
+<!-- OSIE + CHWYTAK -->
+<section>
+    <h2>Osi / JOG / Pozycje</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Oś</th>
+                <th>Aktualna</th>
+                <th>Suwak</th>
+                <th>Docelowa</th>
+                <th>JOG</th>
+                <th>GOTO</th>
+                <th>HOME</th>
+                <th>Krańcówka</th>
+            </tr>
+        </thead>
+        <tbody id="axes"></tbody>
+    </table>
+
+    <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+        <span>Krok JOG:</span>
+        <button onclick="setJog(1)">×1</button>
+        <button onclick="setJog(5)">×5</button>
+        <button onclick="setJog(10)">×10</button>
+        <button onclick="setJog(25)">×25</button>
+        <span id="jogInfo" style="margin-left:10px; font-size:12px; color:#8f8;">Aktualny: 1°</span>
+    </div>
+
+    <!-- HOME ALL po lewej -->
+    <div style="margin-top:6px; text-align:left;">
+        <button onclick="sendCmd('GOTOHOME')">HOME ALL</button>
+    </div>
+
+    <h2 style="margin-top:12px;">Chwytak</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Aktualna</th>
+                <th>Suwak</th>
+                <th>Docelowa</th>
+                <th>JOG</th>
+                <th>GOTO</th>
+                <th>OPEN</th>
+                <th>CLOSE</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td id="gripCur">0</td>
+                <td><input type="range" min="0" max="180" step="1" id="gripSlider" oninput="gripSliderMove()"></td>
+                <td><input id="gripTarget" type="number" value="0" oninput="gripTargetChanged()"></td>
+                <td class="jog">
+                    <button onclick="gripJog(-1)">−</button>
+                    <button onclick="gripJog(1)">+</button>
+                </td>
+                <td><button onclick="gripGoto()">GOTO</button></td>
+                <td><button onclick="gripOpen()">OPEN</button></td>
+                <td><button onclick="gripClose()">CLOSE</button></td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+<!-- LIMITY -->
+<section>
+    <h2>Limity / Prędkości / Przyspieszenia</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Oś</th>
+                <th>Min</th>
+                <th>Max</th>
+                <th>Max vel</th>
+                <th>Max acc</th>
+                <th>SET</th>
+            </tr>
+        </thead>
+        <tbody id="limits"></tbody>
+
+        <tfoot>
+            <tr>
+                <td>Chwytak</td>
+                <td><input id="gripMin" type="number" value="0"></td>
+                <td><input id="gripMax" type="number" value="180"></td>
+                <td colspan="3" style="font-size:11px; color:#aaa;">
+                    Limity chwytaka (zamknięty=min, otwarty=max)
+                </td>
+            </tr>
+        </tfoot>
+    </table>
+</section>
+
+<!-- PUNKTY P -->
+<section>
+    <h2>Punkty P</h2>
+
+    <div style="margin-bottom:6px; display:flex; gap:6px;">
+        <button onclick="savePCurrent()">Zapisz aktualną</button>
+        <button onclick="newPoint()">Nowy punkt</button>
+    </div>
+
+    <div style="margin-bottom:6px;">
+        <span>Ręczne wprowadzenie pozycji:</span>
+        <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">
+            <span>X:<input id="pManX" type="number" value="0"></span>
+            <span>Y:<input id="pManY" type="number" value="0"></span>
+            <span>Z:<input id="pManZ" type="number" value="0"></span>
+            <span>A:<input id="pManA" type="number" value="0"></span>
+            <span>B:<input id="pManB" type="number" value="0"></span>
+            <span>C:<input id="pManC" type="number" value="0"></span>
+            <span>Chwytak:
+                <select id="pManGrip">
+                    <option value="open">OPEN</option>
+                    <option value="close">CLOSE</option>
+                </select>
+            </span>
+        </div>
+
+        <div style="margin-top:4px; display:flex; gap:6px;">
+            <button onclick="savePManual()">Zapisz ręcznie</button>
+        </div>
+    </div>
+
+    <div style="margin-bottom:6px;">
+        <select id="pList" size="6" style="width:100%;" onchange="onPSelect()"></select>
+    </div>
+
+    <div style="display:flex; gap:6px; margin-bottom:10px;">
+		<button onclick="gotoP()">PGOTO</button>
+		<button onclick="deleteP()">Usuń</button>
+		<button onclick="clearP()">Wyczyść listę</button>
+		<button onclick="exportPoints()">Export P</button>
+		<button onclick="importPoints()">Import P</button>
+	</div>
+	
+
+    <h2>Program</h2>
+
+    <div style="margin-bottom:6px; display:flex; gap:6px;">
+        <button onclick="addProgramStep()">Dodaj krok</button>
+        <button onclick="clearProgram()">Wyczyść program</button>
+		<button onclick="startProgram()">Start</button>
+        <button onclick="stopProgram()">Stop</button>
+        <button onclick="pauseProgram()">Pauza</button>
+        <button onclick="resetProgram()">Reset</button>
+		<button onclick="exportAll()">Export</button>
+		<button onclick="importAll()">Import</button>
+	</div>
+
+        <span id="progNav" style="display:none; gap:4px;">
+            <button onclick="stepProgram(-1)">←</button>
+            <button onclick="stepProgram(1)">→</button>
+        </span>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Punkt</th>
+                <th>Prędkość (F)</th>
+                <th>Sleep [ms]</th>
+                <th>Usuń</th>
+            </tr>
+        </thead>
+        <tbody id="progTable"></tbody>
+    </table>
+</section>
+
+</main>
+<script>
+const AXES = ["X","Y","Z","A","B","C"];
+
+
+let state = {
+    pos:[0,0,0,0,0,0],
+    min:[-180,-180,-180,-180,-180,-180],
+    max:[180,180,180,180,180,180],
+    vel:[50,50,50,50,50,50],
+    acc:[100,100,100,100,100,100],
+    limits:[0,0,0,0,0,0],
+    gripAngle:0
+};
+
+let jogStep = 1;
+let pPoints = [];
+let nextPId = 1;
+let programSteps = [];
+let programRunning = false;
+let programPaused = false;
+let programStopFlag = false;
+let programCurrentIndex = 0;
+let silentBusy = false;
+
+
+/* ---------------- TERMINAL ---------------- */
+
+function clearTerminal() {
+    document.getElementById("term").textContent = "";
+}
+
+function trimLogHistory() {
+    const t = document.getElementById("term");
+    const lines = t.children;
+
+    while (lines.length > 500) {
+        t.removeChild(lines[0]);
+    }
+}
+
+function log(msg){
+    const t = document.getElementById("term");
+
+    let cls = "log-ok";
+    if (msg.startsWith(">")) cls = "log-cmd";
+    if (msg.toLowerCase().includes("err")) cls = "log-err";
+
+    const div = document.createElement("div");
+    div.className = cls;
+    div.textContent = msg;
+
+    // kliknięcie → wstawia komendę do inputa
+    div.onclick = () => {
+        const cmdInput = document.getElementById("cmd");
+        if (msg.startsWith(">")) {
+            cmdInput.value = msg.substring(2); // usuń "> "
+        } else {
+            cmdInput.value = msg;
+        }
+        cmdInput.focus();
+    };
+
+    t.appendChild(div);
+    trimLogHistory();   // <-- limit 500 linii
+    t.scrollTop = t.scrollHeight;
+}
+
+
+
+async function sendCmd(cmd=null){
+    if(!cmd) cmd=document.getElementById("cmd").value;
+    if(!cmd.trim()) return;
+    log("> "+cmd);
+    document.getElementById("cmd").value="";
+    try{
+        let r=await fetch("/api/cmd",{method:"POST",body:cmd});
+        let txt=await r.text();
+        if (txt.trim().length) log(txt.trim());
+    }catch(e){ log("ERR: "+e); }
+}
+
+/* ---------------- OSIE ---------------- */
+
+function buildTables(){
+    let ax=document.getElementById("axes");
+    let lim=document.getElementById("limits");
+    ax.innerHTML="";
+    lim.innerHTML="";
+    AXES.forEach((name,i)=>{
+        ax.innerHTML+=`
+        <tr>
+            <td>${name}</td>
+            <td id="cur${i}">0.000</td>
+            <td><input type="range" min="-180" max="180" step="0.1" id="slider${i}" oninput="sliderMove(${i})"></td>
+            <td><input id="t${i}" type="number" value="0" oninput="targetChanged(${i})"></td>
+            <td class="jog">
+                <button onclick="jog(${i},-1)">−</button>
+                <button onclick="jog(${i},1)">+</button>
+            </td>
+            <td><button onclick="gotoAxis(${i})">GOTO</button></td>
+            <td><button onclick="sendCmd('HOME ${i}')">HOME</button></td>
+            <td><span id="lim${i}" class="limit-indicator" style="background:#0a0;"></span></td>
+        </tr>`;
+
+        lim.innerHTML+=`
+        <tr>
+            <td>${name}</td>
+            <td><input id="min${i}" type="number" value="${state.min[i]}"></td>
+            <td><input id="max${i}" type="number" value="${state.max[i]}"></td>
+            <td><input id="vel${i}" type="number" value="${state.vel[i]}"></td>
+            <td><input id="acc${i}" type="number" value="${state.acc[i]}"></td>
+            <td><button onclick="setLimits(${i})">SET</button></td>
+        </tr>`;
+    });
+}
+
+function setJog(v){
+    jogStep = v;
+    document.getElementById("jogInfo").textContent = "Aktualny: " + v + "°";
+}
+
+function sliderMove(i){
+    let v=document.getElementById("slider"+i).value;
+    document.getElementById("t"+i).value=v;
+}
+
+function targetChanged(i){
+    let v=document.getElementById("t"+i).value;
+    document.getElementById("slider"+i).value=v;
+}
+
+function jog(i,dir){
+    sendCmd(`JOG ${AXES[i]}${dir>0?'+':'-'} ${jogStep}`);
+}
+
+function gotoAxis(i){
+    let v=parseFloat(document.getElementById("t"+i).value);
+    if (isNaN(v)) return;
+    sendCmd(`GOTO ${AXES[i]}${v} F50`);
+}
+
+function setLimits(i){
+    let min = document.getElementById("min"+i).value;
+    let max = document.getElementById("max"+i).value;
+    let vel = document.getElementById("vel"+i).value;
+    let acc = document.getElementById("acc"+i).value;
+
+    // limity kątowe
+    sendCmd(`SETLIMIT ${i+1} ${min} ${max}`);
+
+    // prędkość maksymalna
+    sendCmd(`SETVEL ${i+1} ${vel}`);
+
+    // przyspieszenie maksymalne
+    sendCmd(`SETACC ${i+1} ${acc}`);
+}
+
+function updateAxesFromState() {
+    AXES.forEach((_, i) => {
+        document.getElementById("cur" + i).textContent = state.pos[i].toFixed(3);
+        document.getElementById("slider" + i).value = state.pos[i];
+        document.getElementById("t" + i).value = state.pos[i];
+    });
+}
+
+/* ---------------- CHWYTAK ---------------- */
+
+function gripSliderMove(){
+    let v=document.getElementById("gripSlider").value;
+    document.getElementById("gripTarget").value=v;
+}
+
+function gripTargetChanged(){
+    let v=document.getElementById("gripTarget").value;
+    document.getElementById("gripSlider").value=v;
+}
+
+function gripJog(dir){
+    let step = jogStep;
+    let cur = parseFloat(document.getElementById("gripTarget").value) || 0;
+    let v = cur + dir*step;
+    if (v<0) v=0;
+    if (v>180) v=180;
+    document.getElementById("gripTarget").value = v;
+    document.getElementById("gripSlider").value = v;
+    sendCmd(`SERVO ${v}`);
+}
+
+function gripGoto(){
+    let v=parseFloat(document.getElementById("gripTarget").value);
+    if (isNaN(v)) return;
+    sendCmd(`SERVO ${v}`);
+}
+
+function gripOpen(){
+    document.getElementById("gripTarget").value = 0;
+    document.getElementById("gripSlider").value = 0;
+    sendCmd("SERVO 0");
+}
+
+function gripClose(){
+    document.getElementById("gripTarget").value = 90;
+    document.getElementById("gripSlider").value = 90;
+    sendCmd("SERVO 90");
+}
+
+/* ---------------- STATUS POLLING (Web Serial) ---------------- */
+
+async function poll() {
+    if (!serialConnected) {
+        document.getElementById("status").textContent = "Status: offline";
+        document.getElementById("status").style.color = "#f66";
+        return;
+    }
+
+    // Połączony → status OK
+    document.getElementById("status").textContent = "Status: Połączono (USB)";
+    document.getElementById("status").style.color = "#8f8";
+
+    // Ciche pobranie pozycji
+    sendSilentCmd("POS");
+}
+
+/* ---------------- PUNKTY P — EDYCJA JAK W KODZIE 5 ---------------- */
+
+function updatePList(){
+    let list=document.getElementById("pList");
+    list.innerHTML="";
+    pPoints.sort((a,b)=>a.id-b.id);
+    pPoints.forEach(p=>{
+        list.innerHTML+=`<option value="${p.id}">P${p.id} — ${p.pos.map(v=>v.toFixed(1)).join(", ")} | ${p.gripOpen?'OPEN':'CLOSE'}</option>`;
+    });
+}
+
+function getSelectedPoint() {
+    let idx = parseInt(document.getElementById("pList").value);
+    if (isNaN(idx)) return null;
+    return pPoints.find(p => p.id === idx) || null;
+}
+
+function newPoint(){
+    let pos=[...state.pos];
+    let gripOpen = (parseFloat(document.getElementById("gripTarget").value) <= 10);
+    let id = nextPId++;
+    pPoints.push({id,pos,gripOpen});
+    updatePList();
+}
+
+function savePCurrent(){
+    let selected = getSelectedPoint();
+    let pos = [
+		clampAxisValue(0, state.pos[0]),
+		clampAxisValue(1, state.pos[1]),
+		clampAxisValue(2, state.pos[2]),
+		clampAxisValue(3, state.pos[3]),
+		clampAxisValue(4, state.pos[4]),
+		clampAxisValue(5, state.pos[5])
+	];
+	
+    let gripOpen = (parseFloat(document.getElementById("gripTarget").value) <= 10);
+
+    if (selected) {
+        selected.pos = pos;
+        selected.gripOpen = gripOpen;
+    } else {
+        let id = nextPId++;
+        pPoints.push({id,pos,gripOpen});
+    }
+
+    updatePList();
+}
+
+function savePManual(){
+    let pos = [
+		clampAxisValue(0, parseFloat(document.getElementById("pManX").value) || 0),
+		clampAxisValue(1, parseFloat(document.getElementById("pManY").value) || 0),
+		clampAxisValue(2, parseFloat(document.getElementById("pManZ").value) || 0),
+		clampAxisValue(3, parseFloat(document.getElementById("pManA").value) || 0),
+		clampAxisValue(4, parseFloat(document.getElementById("pManB").value) || 0),
+		clampAxisValue(5, parseFloat(document.getElementById("pManC").value) || 0)
+	];
+
+
+    let gripSel=document.getElementById("pManGrip").value;
+    let gripOpen = (gripSel==="open");
+
+    let selected = getSelectedPoint();
+
+    if (selected) {
+        selected.pos = pos;
+        selected.gripOpen = gripOpen;
+    } else {
+        let id = nextPId++;
+        pPoints.push({id,pos,gripOpen});
+    }
+
+    updatePList();
+}
+
+function onPSelect(){
+    let p = getSelectedPoint();
+    if (!p) return;
+
+    document.getElementById("pManX").value = p.pos[0];
+    document.getElementById("pManY").value = p.pos[1];
+    document.getElementById("pManZ").value = p.pos[2];
+    document.getElementById("pManA").value = p.pos[3];
+    document.getElementById("pManB").value = p.pos[4];
+    document.getElementById("pManC").value = p.pos[5];
+    document.getElementById("pManGrip").value = p.gripOpen ? "open" : "close";
+}
+
+function gotoP(){
+    let p = getSelectedPoint();
+    if (!p) return;
+
+    let cmd="GOTO ";
+    AXES.forEach((a,i)=>{
+        cmd+=`${a}${p.pos[i]} `;
+    });
+    cmd+="F50";
+
+    sendCmd(cmd);
+    sendCmd(`SERVO ${p.gripOpen?0:90}`);
+}
+
+function deleteP(){
+    let p = getSelectedPoint();
+    if (!p) return;
+
+    pPoints = pPoints.filter(pp => pp.id !== p.id);
+    updatePList();
+}
+
+function clearP(){
+    pPoints=[];
+    nextPId=1;
+    updatePList();
+}
+
+/* ---------------- PROGRAMOWANIE ---------------- */
+
+function updateProgramTable(){
+    let tbody=document.getElementById("progTable");
+    tbody.innerHTML="";
+    programSteps.forEach((s,idx)=>{
+        tbody.innerHTML+=`
+        <tr>
+            <td>${idx+1}</td>
+            <td>
+                <select onchange="progChangePoint(${idx}, this.value)">
+                    ${pPoints.map(p=>`<option value="${p.id}" ${p.id===s.pointId?'selected':''}>P${p.id}</option>`).join("")}
+                </select>
+            </td>
+            <td><input type="number" value="${s.feed}" onchange="progChangeFeed(${idx}, this.value)"></td>
+            <td><input type="number" value="${s.sleepMs}" onchange="progChangeSleep(${idx}, this.value)"></td>
+            <td><button onclick="removeProgramStep(${idx})">X</button></td>
+        </tr>`;
+    });
+}
+
+function addProgramStep(){
+    if (pPoints.length===0) return;
+    let defaultPoint = pPoints[0].id;
+    programSteps.push({pointId:defaultPoint, feed:50, sleepMs:0});
+    updateProgramTable();
+}
+
+function removeProgramStep(idx){
+    programSteps.splice(idx,1);
+    updateProgramTable();
+}
+
+function clearProgram(){
+    programSteps=[];
+    updateProgramTable();
+}
+
+function progChangePoint(idx,val){
+    programSteps[idx].pointId=parseInt(val);
+}
+
+function progChangeFeed(idx,val){
+    programSteps[idx].feed=parseFloat(val)||50;
+}
+
+function progChangeSleep(idx,val){
+    programSteps[idx].sleepMs=parseInt(val)||0;
+}
+
+function updateProgNav(){
+    document.getElementById("progNav").style.display = programPaused ? "inline-flex" : "none";
+}
+
+async function runProgramLoop(){
+    programRunning = true;
+    programStopFlag = false;
+    programPaused = false;
+    updateProgNav();
+    programCurrentIndex = 0;
+
+    while(programRunning && !programStopFlag && programCurrentIndex < programSteps.length){
+        if (programPaused){
+            await new Promise(res=>setTimeout(res,100));
+            continue;
+        }
+        let step = programSteps[programCurrentIndex];
+        let p = pPoints.find(pp=>pp.id===step.pointId);
+        if (p){
+            let cmd="GOTO ";
+            AXES.forEach((a,i)=>{
+                cmd+=`${a}${p.pos[i]} `;
+            });
+            cmd+=`F${step.feed}`;
+            await sendCmd(cmd);
+            await sendCmd(`SERVO ${p.gripOpen?0:90}`);
+            if (step.sleepMs>0){
+                await new Promise(res=>setTimeout(res, step.sleepMs));
+            }
+        }
+        programCurrentIndex++;
+    }
+
+    programRunning = false;
+    programPaused = false;
+    programStopFlag = false;
+    updateProgNav();
+}
+
+function startProgram(){
+    if (programRunning) return;
+    if (programSteps.length===0) return;
+    runProgramLoop();
+}
+
+function stopProgram(){
+    programStopFlag = true;
+}
+
+function pauseProgram(){
+    if (!programRunning) return;
+    programPaused = !programPaused;
+    updateProgNav();
+}
+
+function resetProgram(){
+    programStopFlag = true;
+    programRunning = false;
+    programPaused = false;
+    programCurrentIndex = 0;
+    updateProgNav();
+}
+
+function stepProgram(dir){
+    if (!programPaused || programSteps.length===0) return;
+    programCurrentIndex += dir;
+    if (programCurrentIndex < 0) programCurrentIndex = 0;
+    if (programCurrentIndex >= programSteps.length) programCurrentIndex = programSteps.length-1;
+    let step = programSteps[programCurrentIndex];
+    let p = pPoints.find(pp=>pp.id===step.pointId);
+    if (!p) return;
+    let cmd="GOTO ";
+    AXES.forEach((a,i)=>{
+        cmd+=`${a}${p.pos[i]} `;
+    });
+    cmd+=`F${step.feed}`;
+    sendCmd(cmd);
+    sendCmd(`SERVO ${p.gripOpen?0:90}`);
+}
+
+function exportAll() {
+    const data = {
+        points: pPoints,
+        program: programSteps
+    };
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json"
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+
+    a.href = url;
+    a.download = "robot_program.json";
+    a.click();
+
+    URL.revokeObjectURL(url);
+}
+
+function importAll() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+
+    input.onchange = e => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+
+        reader.onload = () => {
+            try {
+                const data = JSON.parse(reader.result);
+
+                // Import punktów
+                if (Array.isArray(data.points)) {
+                    pPoints = data.points;
+                    nextPId = pPoints.length > 0
+                        ? Math.max(...pPoints.map(p => p.id)) + 1
+                        : 1;
+                    updatePList();
+                    log("Zaimportowano punkty P.");
+                }
+
+                // Import programu
+                if (Array.isArray(data.program)) {
+                    programSteps = data.program;
+                    updateProgramTable();
+                    log("Zaimportowano program.");
+                }
+
+                if (!data.points && !data.program) {
+                    alert("Plik nie zawiera danych programu ani punktów.");
+                }
+
+            } catch (err) {
+                alert("Błąd podczas importu pliku.");
+            }
+        };
+
+        reader.readAsText(file);
+    };
+
+    input.click();
+}
+
+function clampAxisValue(axisIndex, value) {
+    const min = parseFloat(document.getElementById("min" + axisIndex).value);
+    const max = parseFloat(document.getElementById("max" + axisIndex).value);
+
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+}
+
+buildTables();
+setInterval(poll,1000);
+
+// =========================
+// WEB SERIAL
+// =========================
+
+let port = null;
+let reader = null;
+let writer = null;
+let serialConnected = false;
+let readBuffer = "";
+
+// Połączenie z ESP32
+async function connectSerial() {
+    try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+
+        const textDecoder = new TextDecoderStream();
+        const textEncoder = new TextEncoderStream();
+
+        port.readable.pipeTo(textDecoder.writable);
+        textEncoder.readable.pipeTo(port.writable);
+
+        reader = textDecoder.readable.getReader();
+        writer = textEncoder.writable.getWriter();
+
+        serialConnected = true;
+        document.getElementById("status").textContent = "Status: Połączono (USB)";
+        document.getElementById("status").style.color = "#8f8";
+
+        readLoop();
+    } catch (e) {
+        log("ERR: " + e);
+        document.getElementById("status").textContent = "Status: błąd połączenia";
+        document.getElementById("status").style.color = "#f66";
+    }
+}
+
+// Odbieranie danych
+async function readLoop() {
+    try {
+        while (serialConnected) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) handleSerialChunk(value);
+        }
+    } catch (e) {
+        log("ERR read: " + e);
+    }
+}
+
+// Buforowanie linii
+function handleSerialChunk(chunk) {
+    readBuffer += chunk;
+    let idx;
+    while ((idx = readBuffer.indexOf("\n")) >= 0) {
+        let line = readBuffer.substring(0, idx).trim();
+        readBuffer = readBuffer.substring(idx + 1);
+        if (line.length > 0) handleSerialLine(line);
+    }
+}
+
+// Obsługa pojedynczej linii z ESP32
+function handleSerialLine(line) {
+
+    // POS — ciche przetwarzanie
+    if (line.startsWith("Axis ")) {
+        const m = line.match(/^Axis\s+(\d+):\s*([\-0-9\.]+)/);
+        if (m) {
+            const axis = parseInt(m[1], 10) - 1;
+            const val = parseFloat(m[2]);
+            if (axis >= 0 && axis < 6) {
+                state.pos[axis] = val;
+                updateAxesFromState();
+            }
+        }
+        return; // <-- nie logujemy do terminala
+    }
+
+    // Reszta normalnie
+    log(line);
+}
+
+
+
+// Wysyłanie komend
+async function sendCmd(cmd = null) {
+    if (!serialConnected || !writer) {
+        log("ERR: brak połączenia USB");
+        return;
+    }
+    if (!cmd) cmd = document.getElementById("cmd").value;
+    if (!cmd.trim()) return;
+
+    log("> " + cmd);
+    document.getElementById("cmd").value = "";
+
+    try {
+        await writer.write(cmd + "\n");
+    } catch (e) {
+        log("ERR write: " + e);
+    }
+}
+
+function silentLog(msg) {
+    // nic nie robi — brak wyświetlania
+}
+
+async function sendSilentCmd(cmd) {
+    if (!serialConnected || !writer) return;
+    if (silentBusy) return;
+
+    silentBusy = true;
+    try {
+        await writer.write(cmd + "\n");
+    } catch (e) {
+        // brak logowania
+    }
+    setTimeout(() => silentBusy = false, 150);
+}
+
+
+setInterval(()=>{
+    if (serialConnected) sendSilentCmd("POS");
+}, 300);
+
+</script>
+
+</body>
