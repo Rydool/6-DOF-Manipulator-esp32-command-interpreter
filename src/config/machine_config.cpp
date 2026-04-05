@@ -4,7 +4,7 @@ MachineConfig machineConfig;
 
 // domyślne wartości
 static const float DEFAULT_STEPS_PER_DEG[AXIS_COUNT] = {
-    85.6785, 177.7778, 177.7778, 88.8889, 81.1733, 10.1467
+    85.7, 177.8, 177.8, 88.9, 81.2, 10.2
 };
 
 static const float DEFAULT_MAX_SPEED[AXIS_COUNT] = {

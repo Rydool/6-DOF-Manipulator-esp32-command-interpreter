@@ -624,17 +624,31 @@ if (line.startsWith("JOG")) {
     }
 
     // HOME <axis> — homing z rampa, ignoruje soft-limity
-    if (line.startsWith("HOME")) {
-        int axis = line.substring(4).toInt();
+    // HOME <axis> — homing z rampa, ignoruje soft-limity
+if (line.startsWith("HOME")) {
+    // użytkownik podaje 1..6
+    int axisNum = line.substring(4).toInt();
+    int axis = axisNum - 1;   // wewnętrznie 0..5
 
-        MotionBlock b;
-        b.homing = true;
-        b.target_deg[0] = axis;
-
-        motionQueue.push(b);
-        Serial.println("OK");
+    if (axis < 0 || axis >= AXIS_COUNT) {
+        Serial.println("ERR");
         return;
     }
+
+    MotionBlock b;
+    b.homing = true;
+
+    // wyzeruj target_deg
+    for (int i = 0; i < AXIS_COUNT; i++)
+        b.target_deg[i] = 0.0f;
+
+    // zakoduj numer osi (0‑based)
+    b.target_deg[0] = axis;
+
+    motionQueue.push(b);
+    Serial.println("OK");
+    return;
+}
 
     if (line == "SAVE") {
         machineConfig.save();
