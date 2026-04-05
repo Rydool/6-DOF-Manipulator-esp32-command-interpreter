@@ -294,8 +294,8 @@ const AXES = ["X","Y","Z","A","B","C"];
 
 let state = {
     pos:[0,0,0,0,0,0],
-    min:[-180,-180,-180,-180,-180,-180],
-    max:[180,180,180,180,180,180],
+    min:[-180, -105, -25, -270, -110, -270],
+    max:[180,  100, 195,  270,  110,  270],
     vel:[50,50,50,50,50,50],
     acc:[100,100,100,100,100,100],
     limits:[0,0,0,0,0,0],
@@ -404,6 +404,19 @@ function buildTables(){
     });
 }
 
+function updateSliderRanges() {
+    AXES.forEach((_, i) => {
+        const min = parseFloat(document.getElementById("min" + i).value);
+        const max = parseFloat(document.getElementById("max" + i).value);
+
+        const slider = document.getElementById("slider" + i);
+
+        slider.min = min;
+        slider.max = max;
+    });
+}
+
+
 function setJog(v){
     jogStep = v;
     document.getElementById("jogInfo").textContent = "Aktualny: " + v + "°";
@@ -443,15 +456,19 @@ function setLimits(i){
 
     // przyspieszenie maksymalne
     sendCmd(`SETACC ${i+1} ${acc}`);
+
+    // 🔥 aktualizacja zakresów suwaków po zmianie limitów
+    updateSliderRanges();
 }
+
 
 function updateAxesFromState() {
     AXES.forEach((_, i) => {
+        // aktualna pozycja robota
         document.getElementById("cur" + i).textContent = state.pos[i].toFixed(3);
-        document.getElementById("slider" + i).value = state.pos[i];
-        document.getElementById("t" + i).value = state.pos[i];
     });
 }
+
 
 /* ---------------- CHWYTAK ---------------- */
 
@@ -925,18 +942,30 @@ async function sendCmd(cmd = null) {
         log("ERR: brak połączenia USB");
         return;
     }
+
     if (!cmd) cmd = document.getElementById("cmd").value;
     if (!cmd.trim()) return;
 
     log("> " + cmd);
-    document.getElementById("cmd").value = "";
 
     try {
         await writer.write(cmd + "\n");
     } catch (e) {
         log("ERR write: " + e);
     }
+
+    // 🔥 TU JEST NAJWAŻNIEJSZE:
+    document.getElementById("cmd").value = "";
 }
+
+document.getElementById("cmd").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+        e.preventDefault();
+        sendCmd();
+    }
+});
+
+
 
 function silentLog(msg) {
     // nic nie robi — brak wyświetlania
