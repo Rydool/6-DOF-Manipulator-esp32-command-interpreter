@@ -57,7 +57,7 @@
 
     #term {
         background:#000;
-        height:328px;
+        height:363px;
         overflow-y:auto;
         padding:6px;
         font-family:monospace;
@@ -88,6 +88,27 @@
 
     #term div { cursor:pointer; }
     #term div:hover { background:rgba(255,255,255,0.08); }
+
+    .modeSwitch {
+    display:flex;
+    gap:6px;
+    margin-bottom:10px;
+    font-size:14px;
+}
+
+.modeSwitch span {
+    cursor:pointer;
+    padding:4px 8px;
+    border-radius:4px;
+    transition:0.2s;
+}
+
+.modeSwitch .active {
+    font-weight:bold;
+    background:#444;   /* szare tło */
+    color:white;
+}
+
 </style>
 </head>
 
@@ -113,69 +134,144 @@
     </div>
 </section>
 
-<!-- OSIE + CHWYTAK -->
+<!-- OSIE + CHWYTAK – PRZEŁĄCZANY TRYB -->
 <section>
-    <h2>Układ przegubowy</h2>
+    <h2>Tryb sterowania</h2>
 
-    <table>
-        <thead>
-            <tr>
-                <th>Oś</th>
-                <th>Aktualna</th>
-                <th>Suwak</th>
-                <th>Docelowa</th>
-                <th>Prędkość (F)</th>
-                <th>JOG</th>
-                <th>GOTO</th>
-                <th>HOME / CAL</th>
-                <th>Krańcówka</th>
-            </tr>
-        </thead>
-        <tbody id="axes"></tbody>
-    </table>
-
-    <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
-        <span>Krok JOG:</span>
-        <button onclick="setJog(1)">×1</button>
-        <button onclick="setJog(5)">×5</button>
-        <button onclick="setJog(10)">×10</button>
-        <button onclick="setJog(25)">×25</button>
-        <span id="jogInfo" style="margin-left:10px; font-size:12px; color:#8f8;">Aktualny: 1°</span>
+    <div class="modeSwitch">
+        <span id="modeA" class="active" onclick="switchMode('A')">Układ przegubowy</span>
+        <span>/</span>
+        <span id="modeB" onclick="switchMode('B')">Układ kartezjański</span>
     </div>
 
-    <div style="margin-top:6px; text-align:left;">
-        <button onclick="sendCmd(GRBL.homeAll)">HOME ALL</button>
+    <!-- UKŁAD PRZEGUBOWY -->
+    <div id="przegubowyTab">
+        <table>
+            <thead>
+                <tr>
+                    <th>Oś</th>
+                    <th>Aktualna</th>
+                    <th>Suwak</th>
+                    <th>Docelowa</th>
+                    <th>Prędkość (F)</th>
+                    <th>JOG</th>
+                    <th>GOTO</th>
+                    <th>HOME / CAL</th>
+                    <th>Krańcówka</th>
+                </tr>
+            </thead>
+            <tbody id="axes"></tbody>
+        </table>
+
+        <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+            <span>Krok JOG:</span>
+            <button onclick="setJog(1)">×1</button>
+            <button onclick="setJog(5)">×5</button>
+            <button onclick="setJog(10)">×10</button>
+            <button onclick="setJog(25)">×25</button>
+            <span id="jogInfo" style="margin-left:10px; font-size:12px; color:#8f8;">Aktualny: 1°</span>
+        </div>
+
+        <div style="margin-top:6px; text-align:left;">
+            <button onclick="sendCmd(GRBL.homeAll)">HOME ALL</button>
+        </div>
+
+        <h2 style="margin-top:12px;">Chwytak</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Aktualna</th>
+                    <th>Suwak</th>
+                    <th>Docelowa</th>
+                    <th>JOG</th>
+                    <th>GOTO</th>
+                    <th>OPEN</th>
+                    <th>CLOSE</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td id="gripCur">0</td>
+                    <td><input type="range" min="0" max="180" step="1" id="gripSlider" oninput="gripSliderMove()"></td>
+                    <td><input id="gripTarget" type="number" value="0" oninput="gripTargetChanged()"></td>
+                    <td class="jog">
+                        <button onclick="gripJog(-1)">−</button>
+                        <button onclick="gripJog(1)">+</button>
+                    </td>
+                    <td><button onclick="gripGoto()">GOTO</button></td>
+                    <td><button onclick="gripOpen()">OPEN</button></td>
+                    <td><button onclick="gripClose()">CLOSE</button></td>
+                </tr>
+            </tbody>
+        </table>
+
     </div>
 
-    <h2 style="margin-top:12px;">Chwytak</h2>
+    <!-- UKŁAD KARTEZJAŃSKI -->
+    <div id="kartezjanskiTab" style="display:none;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Oś</th>
+                    <th>Aktualna</th>
+                    <th>Suwak</th>
+                    <th>Docelowa</th>
+                    <th>Prędkość (F)</th>
+                    <th>JOG</th>
+                    <th>GOTO</th>
+                    <th>HOME / CAL</th>
+                    <th>Krańcówka</th>
+                </tr>
+            </thead>
+            <tbody id="axes_cartesian"></tbody>
+        </table>
 
-    <table>
-        <thead>
-            <tr>
-                <th>Aktualna</th>
-                <th>Suwak</th>
-                <th>Docelowa</th>
-                <th>JOG</th>
-                <th>GOTO</th>
-                <th>OPEN</th>
-                <th>CLOSE</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td id="gripCur">0</td>
-                <td><input type="range" min="0" max="180" step="1" id="gripSlider" oninput="gripSliderMove()"></td>
-                <td><input id="gripTarget" type="number" value="0" oninput="gripTargetChanged()"></td>
-                <td class="jog">
-                    <button onclick="gripJog(-1)">−</button>
-                    <button onclick="gripJog(1)">+</button>
-                </td>
-                <td><button onclick="gripGoto()">GOTO</button></td>
-                <td><button onclick="gripOpen()">OPEN</button></td>
-                <td><button onclick="gripClose()">CLOSE</button></td>
-            </tr>
-        </tbody>
-    </table>
+        <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+            <span>Krok JOG:</span>
+            <button onclick="setJogCartesian(1)">×1</button>
+            <button onclick="setJogCartesian(5)">×5</button>
+            <button onclick="setJogCartesian(10)">×10</button>
+            <button onclick="setJogCartesian(25)">×25</button>
+            <span id="jogInfoCartesian" style="margin-left:10px; font-size:12px; color:#8f8;">Aktualny: 1mm</span>
+        </div>
+
+        <div style="margin-top:6px; text-align:left;">
+            <button onclick="homeCartesian()">HOME ALL</button>
+        </div>
+
+        <h2 style="margin-top:12px;">Chwytak</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Aktualna</th>
+                    <th>Suwak</th>
+                    <th>Docelowa</th>
+                    <th>JOG</th>
+                    <th>GOTO</th>
+                    <th>OPEN</th>
+                    <th>CLOSE</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td id="gripCurC">0</td>
+                    <td><input type="range" min="0" max="180" step="1" id="gripSliderC" oninput="gripSliderMoveC()"></td>
+                    <td><input id="gripTargetC" type="number" value="0" oninput="gripTargetChangedC()"></td>
+                    <td class="jog">
+                        <button onclick="gripJogC(-1)">−</button>
+                        <button onclick="gripJogC(1)">+</button>
+                    </td>
+                    <td><button onclick="gripGotoC()">GOTO</button></td>
+                    <td><button onclick="gripOpenC()">OPEN</button></td>
+                    <td><button onclick="gripCloseC()">CLOSE</button></td>
+                </tr>
+            </tbody>
+        </table>
+
+    </div>
+
 </section>
 
 <!-- LIMITY -->
@@ -198,16 +294,15 @@
         </thead>
         <tbody id="limits"></tbody>
     </table>
-    </div> <!-- koniec limitsPanel -->
+    </div>
 </section>
 
 <!-- PUNKTY P + PROGRAM -->
 <section>
     <h2 style="cursor:pointer;" onclick="toggleProgram()">
-    Punkty / Program ▼
+        Punkty / Program ▼
     </h2>
     <div id="programPanel" style="display:none;">
-
 
     <div style="margin-bottom:8px; display:flex; gap:8px;">
         <button onclick="savePCurrent()">Zapisz aktualną</button>
@@ -268,17 +363,15 @@
         </thead>
         <tbody id="progTable"></tbody>
     </table>
-    </div> <!-- koniec programPanel -->
+
+    </div>
 </section>
 
 </main>
 
 <script>
-// =======================
-//  GRBL – CENTRALNE KOMENDY
-// =======================
-
 const AXES = ["X","Y","Z","A","B","C"];
+const AXES_CART = ["X","Y","Z","Rx","Ry","Rz"];
 
 const GRBL = {
     abs: "G90",
@@ -322,10 +415,6 @@ const GRBL = {
     }
 };
 
-// =======================
-//  TERMINAL
-// =======================
-
 function clearTerminal() {
     document.getElementById("term").textContent = "";
 }
@@ -349,10 +438,6 @@ function log(msg){
     t.appendChild(div);
     t.scrollTop = t.scrollHeight;
 }
-
-// =======================
-//  WebSerial
-// =======================
 
 let port = null;
 let reader = null;
@@ -453,10 +538,6 @@ async function sendSilentCmd(cmd){
     }
 }
 
-// =======================
-//  STAN / OSIE
-// =======================
-
 let state = {
     pos:[0,0,0,0,0,0],
     min:[-180, -105, -25, -270, -110, -270],
@@ -513,13 +594,102 @@ function buildTables(){
     });
 }
 
+function buildCartesianTable() {
+    let ax = document.getElementById("axes_cartesian");
+    ax.innerHTML = "";
+
+    AXES_CART.forEach((name, i) => {
+        ax.innerHTML += `
+        <tr>
+            <td>${name}</td>
+            <td id="curC${i}">0.000</td>
+            <td>
+                <input type="range"
+                       id="sliderC${i}"
+                       step="0.1"
+                       min="${state.min[i]}"
+                       max="${state.max[i]}"
+                       oninput="sliderMoveC(${i})">
+            </td>
+            <td><input id="tC${i}" type="number" value="0" oninput="targetChangedC(${i})"></td>
+            <td><input id="fC${i}" type="number" value="50" style="width:60px;"></td>
+            <td class="jog">
+                <button onclick="jogCartesian(${i},-1)">−</button>
+                <button onclick="jogCartesian(${i},1)">+</button>
+            </td>
+            <td><button onclick="gotoCartesian(${i})">GOTO</button></td>
+            <td>
+                <button onclick="homeCartesian()">HOME</button>
+                <button onclick="calibrateCartesian(${i})">CAL</button>
+            </td>
+            <td><span id="limC${i}" class="limit-indicator" style="background:#0a0;"></span></td>
+        </tr>`;
+    });
+}
+
+function sliderMoveC(i){
+    let v = document.getElementById("sliderC"+i).value;
+    document.getElementById("tC"+i).value = v;
+}
+
+function targetChangedC(i){
+    let v = document.getElementById("tC"+i).value;
+    document.getElementById("sliderC"+i).value = v;
+}
+
+function jogCartesian(i, dir){
+    let step = jogStep;
+    let f = Math.min(
+        parseFloat(document.getElementById("fC" + i).value),
+        state.vel[i]
+    );
+
+    if (isNaN(f) || f <= 0) f = 50;
+    sendCmd(GRBL.jog(AXES_CART[i], dir * step, f));
+}
+
+function gotoCartesian(i){
+    let v = parseFloat(document.getElementById("tC"+i).value);
+    let f = Math.min(
+        parseFloat(document.getElementById("fC"+i).value),
+        state.vel[i]
+    );
+
+    if (isNaN(v) || isNaN(f)) return;
+
+    v = clampAxisValue(i, v);
+    sendCmd(GRBL.moveAbs(AXES_CART[i], v, f));
+}
+
+function updateCartesianFromState() {
+    AXES_CART.forEach((_, i) => {
+        const el = document.getElementById("curC" + i);
+        if (el) el.textContent = state.pos[i].toFixed(3);
+    });
+}
+
 function updateSliderRanges() {
     AXES.forEach((_, i) => {
         const min = parseFloat(document.getElementById("min" + i).value);
         const max = parseFloat(document.getElementById("max" + i).value);
         const slider = document.getElementById("slider" + i);
-        slider.min = min;
-        slider.max = max;
+        if (slider) {
+            slider.min = min;
+            slider.max = max;
+        }
+    });
+    updateCartesianSliderRanges();
+}
+
+function updateCartesianSliderRanges() {
+    AXES_CART.forEach((_, i) => {
+        const min = parseFloat(document.getElementById("min" + i).value);
+        const max = parseFloat(document.getElementById("max" + i).value);
+        const slider = document.getElementById("sliderC" + i);
+        if (slider) {
+            slider.min = min;
+            slider.max = max;
+        }
     });
 }
 
@@ -536,7 +706,6 @@ function setLimits(i){
 
     updateSliderRanges();
 
-    // 🔥 Ustaw maksymalną prędkość w sekcji osi
     const fInput = document.getElementById("f"+i);
     if (fInput) {
         fInput.max = vel;
@@ -546,10 +715,14 @@ function setLimits(i){
     }
 }
 
-
 function setJog(v){
     jogStep = v;
     document.getElementById("jogInfo").textContent = "Aktualny: " + v + "°";
+}
+
+function setJogCartesian(v){
+    jogStep = v;
+    document.getElementById("jogInfoCartesian").textContent = "Aktualny: " + v + "mm";
 }
 
 function sliderMove(i){
@@ -580,8 +753,9 @@ function updateAxesFromState() {
 function jog(i, dir){
     let step = jogStep;
     let f = Math.min(
-    parseFloat(document.getElementById("f" + i).value),
-    state.vel[i]);
+        parseFloat(document.getElementById("f" + i).value),
+        state.vel[i]
+    );
 
     if (isNaN(f) || f <= 0) f = 50;
     sendCmd(GRBL.jog(AXES[i], dir * step, f));
@@ -590,8 +764,9 @@ function jog(i, dir){
 function gotoAxis(i){
     let v = parseFloat(document.getElementById("t"+i).value);
     let f = Math.min(
-    parseFloat(document.getElementById("f"+i).value),
-    state.vel[i]);
+        parseFloat(document.getElementById("f"+i).value),
+        state.vel[i]
+    );
 
     if (isNaN(v) || isNaN(f)) return;
     v = clampAxisValue(i, v);
@@ -606,7 +781,15 @@ function calibrateAxis(i) {
     log(`Kalibracja osi ${axis} rozpoczęta`);
 }
 
-// ---------------- CHWYTAK ----------------
+function homeCartesian(){
+    sendCmd(GRBL.homeAll);
+}
+
+function calibrateCartesian(i){
+    const axis = AXES_CART[i];
+    const seq = GRBL.calibrate(axis, 0);
+    sendCmd(seq);
+}
 
 function gripSliderMove(){
     let v = document.getElementById("gripSlider").value;
@@ -647,7 +830,44 @@ function gripClose(){
     sendCmd(GRBL.servo(90));
 }
 
-// ---------------- PUNKTY P ----------------
+function gripSliderMoveC(){
+    let v = document.getElementById("gripSliderC").value;
+    document.getElementById("gripTargetC").value = v;
+}
+
+function gripTargetChangedC(){
+    let v = document.getElementById("gripTargetC").value;
+    document.getElementById("gripSliderC").value = v;
+}
+
+function gripJogC(dir){
+    let step = jogStep;
+    let cur = parseFloat(document.getElementById("gripTargetC").value) || 0;
+    let v = cur + dir*step;
+    if (v<0) v=0;
+    if (v>180) v=180;
+    document.getElementById("gripTargetC").value = v;
+    document.getElementById("gripSliderC").value = v;
+    sendCmd(GRBL.servo(v));
+}
+
+function gripGotoC(){
+    let v = parseFloat(document.getElementById("gripTargetC").value);
+    if (isNaN(v)) return;
+    sendCmd(GRBL.servo(v));
+}
+
+function gripOpenC(){
+    document.getElementById("gripTargetC").value = 0;
+    document.getElementById("gripSliderC").value = 0;
+    sendCmd(GRBL.servo(0));
+}
+
+function gripCloseC(){
+    document.getElementById("gripTargetC").value = 90;
+    document.getElementById("gripSliderC").value = 90;
+    sendCmd(GRBL.servo(90));
+}
 
 let pPoints = [];
 let nextPId = 1;
@@ -671,7 +891,6 @@ function getSelectedPoint() {
     if (isNaN(idx)) return null;
     return pPoints.find(p => p.id === idx) || null;
 }
-
 
 function savePCurrent(){
     let selected = getSelectedPoint();
@@ -740,8 +959,6 @@ function clearP(){
     nextPId = 1;
     updatePList();
 }
-
-// ---------------- PROGRAM ----------------
 
 function refreshProgramTable(){
     const tbody = document.getElementById("progTable");
@@ -826,7 +1043,6 @@ function stepProgram(dir){
     if (programCurrentIndex>=programSteps.length) programCurrentIndex=programSteps.length-1;
 }
 
-// export/import całości
 function exportAll() {
     const data = {
         points: pPoints,
@@ -890,24 +1106,20 @@ function importAll() {
     input.click();
 }
 
-// ---------------- PARSER ODEBRANYCH LINII ----------------
-
 let lastOkTime = 0;
+let ignoreNextOk = false;
 
 function handleSerialLine(line){
     if (!line) return;
 
-    // 🔥 IGNORUJ OK pochodzące od komendy '?'
     if (line === "ok" && ignoreNextOk) {
-        ignoreNextOk = false;     // reset flagi
-        return;                   // nie pokazuj tego OK
+        ignoreNextOk = false;
+        return;
     }
 
-    // 🔥 FILTR POWTARZAJĄCYCH SIĘ OK
     if (line === "ok") {
         const now = Date.now();
         if (now - lastOkTime < 50) {
-            // pomiń duplikaty OK
             return;
         }
         lastOkTime = now;
@@ -915,7 +1127,6 @@ function handleSerialLine(line){
         return;
     }
 
-    // GRBL status: <Idle|MPos:10.000,20.000,30.000|FS:0,0>
     if (line.startsWith("<") && line.includes("MPos:")) {
         try {
             const mpos = line.split("MPos:")[1].split("|")[0];
@@ -926,6 +1137,7 @@ function handleSerialLine(line){
             }
 
             updateAxesFromState();
+            updateCartesianFromState();
         } catch(e) {
             console.warn("Parse error:", e);
         }
@@ -935,33 +1147,58 @@ function handleSerialLine(line){
     log(line);
 }
 
+function toggleLimits() {
+    const panel = document.getElementById("limitsPanel");
+    const header = panel.previousElementSibling;
 
-// ---------------- INIT ----------------
-
-window.addEventListener("load", ()=>{
-    buildTables();
-    updateSliderRanges();
-
-    document.getElementById("cmd").addEventListener("keydown", (e)=>{
-        if (e.key === "Enter") {
-            e.preventDefault();
-            sendCmd();
-        }
-    });
-});
-
-let ignoreNextOk = false;
-
-setInterval(() => {
-    if (serialConnected) {
-        ignoreNextOk = true;      // 🔥 oznaczamy, że następne OK ma być ukryte
-        sendSilentCmd("?");       // wysyłamy status
+    if (panel.style.display === "none") {
+        panel.style.display = "block";
+        header.innerHTML = "Limity / Prędkości / Przyspieszenia ▲";
+    } else {
+        panel.style.display = "none";
+        header.innerHTML = "Limity / Prędkości / Przyspieszenia ▼";
     }
-}, 200);
+}
 
-// =======================
-//  AUTO-CONNECT
-// =======================
+function toggleProgram() {
+    const panel = document.getElementById("programPanel");
+    const header = panel.previousElementSibling;
+
+    if (panel.style.display === "none") {
+        panel.style.display = "block";
+        header.innerHTML = "Punkty / Program ▲";
+    } else {
+        panel.style.display = "none";
+        header.innerHTML = "Punkty / Program ▼";
+    }
+}
+
+function switchMode(mode) {
+    const A = document.getElementById("modeA");
+    const B = document.getElementById("modeB");
+
+    if (mode === "A") {
+        A.classList.add("active");
+        B.classList.remove("active");
+
+        A.textContent = "Układ przegubowy";
+        B.textContent = "Układ kartezjański";
+
+        document.getElementById("przegubowyTab").style.display = "block";
+        document.getElementById("kartezjanskiTab").style.display = "none";
+    }
+
+    if (mode === "B") {
+        B.classList.add("active");
+        A.classList.remove("active");
+
+        B.textContent = "Układ kartezjański";
+        A.textContent = "Układ przegubowy";
+
+        document.getElementById("przegubowyTab").style.display = "none";
+        document.getElementById("kartezjanskiTab").style.display = "block";
+    }
+}
 
 async function autoConnect() {
     try {
@@ -991,14 +1228,6 @@ async function autoConnect() {
     }
 }
 
-window.addEventListener("load", () => {
-    autoConnect();   // 🔥 automatyczne podłączenie
-});
-
-// =======================
-//  AUTO-CONNECT gdy płytka zostanie podłączona po starcie strony
-// =======================
-
 navigator.serial.addEventListener("connect", async (event) => {
     try {
         port = event.target;
@@ -1023,33 +1252,28 @@ navigator.serial.addEventListener("connect", async (event) => {
     }
 });
 
-function toggleLimits() {
-    const panel = document.getElementById("limitsPanel");
-    const header = panel.previousElementSibling;
+window.addEventListener("load", ()=>{
+    buildTables();
+    buildCartesianTable();
+    updateSliderRanges();
+    updatePList();
+    refreshProgramTable();
+    autoConnect();
 
-    if (panel.style.display === "none") {
-        panel.style.display = "block";
-        header.innerHTML = "Limity / Prędkości / Przyspieszenia ▲";
-    } else {
-        panel.style.display = "none";
-        header.innerHTML = "Limity / Prędkości / Przyspieszenia ▼";
+    document.getElementById("cmd").addEventListener("keydown", (e)=>{
+        if (e.key === "Enter") {
+            e.preventDefault();
+            sendCmd();
+        }
+    });
+});
+
+setInterval(() => {
+    if (serialConnected) {
+        ignoreNextOk = true;
+        sendSilentCmd("?");
     }
-}
-
-function toggleProgram() {
-    const panel = document.getElementById("programPanel");
-    const header = panel.previousElementSibling;
-
-    if (panel.style.display === "none") {
-        panel.style.display = "block";
-        header.innerHTML = "Punkty / Program ▲";
-    } else {
-        panel.style.display = "none";
-        header.innerHTML = "Punkty / Program ▼";
-    }
-}
-
-
+}, 200);
 </script>
 
 </body>
